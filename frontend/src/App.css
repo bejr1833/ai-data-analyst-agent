@@ -1,0 +1,2404 @@
+/* ============================================================
+   GLOBAL VARIABLES
+   ============================================================ */
+
+:root {
+  --paper: #eef1ef;
+  --paper-raised: #f7f9f7;
+  --ink: #1a2333;
+  --ink-soft: #4b5563;
+  --line: #d9ded9;
+
+  --teal: #0f6e67;
+  --teal-dark: #0b534e;
+
+  --orange: #d96c2c;
+  --orange-dark: #b3462c;
+
+  --radius: 3px;
+}
+
+
+/* ============================================================
+   GLOBAL RESET
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+
+/* ============================================================
+   APPLICATION SHELL
+   ============================================================ */
+
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 32px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  font-size: 20px;
+  color: var(--teal);
+}
+
+.brand-name {
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.header-filename {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+.btn-primary,
+.btn-secondary {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn-primary {
+  background: var(--teal);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--teal-dark);
+}
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.btn-secondary:hover {
+  border-color: var(--ink-soft);
+}
+
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+
+.app-main {
+  flex: 1;
+  padding: 40px 32px 80px;
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+
+/* ============================================================
+   INTRO / UPLOAD SCREEN
+   ============================================================ */
+
+.intro {
+  max-width: 640px;
+  margin: 40px auto 0;
+  text-align: left;
+}
+
+.intro-title {
+  font-size: 30px;
+  line-height: 1.25;
+  font-weight: 600;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+.intro-sub {
+  font-size: 15px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  margin: 0 0 28px;
+  max-width: 60ch;
+}
+
+
+/* ============================================================
+   FILE UPLOAD
+   ============================================================ */
+
+.upload-wrap {
+  width: 100%;
+}
+
+.upload-zone {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.upload-zone.is-drag {
+  border-color: var(--teal);
+  background: #e7f0ee;
+}
+
+.upload-zone.is-busy {
+  cursor: default;
+}
+
+.upload-mark {
+  font-size: 26px;
+  color: var(--teal);
+  margin-bottom: 10px;
+}
+
+.upload-title {
+  font-weight: 600;
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+
+.upload-sub {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0;
+  max-width: 42ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.progress-track {
+  width: 100%;
+  max-width: 320px;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  margin: 14px auto 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--teal);
+  transition: width 0.2s ease;
+}
+
+.error-text {
+  color: var(--orange-dark);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+
+/* ============================================================
+   METRICS
+   ============================================================ */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--paper-raised);
+}
+
+.metric-cell {
+  padding: 18px 16px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.metric-value {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+}
+
+
+/* ============================================================
+   GENERAL PANELS
+   ============================================================ */
+
+.panel {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+}
+
+.panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.empty-note {
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+
+/* ============================================================
+   CHARTS
+   ============================================================ */
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.chart-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 14px 6px;
+}
+
+.chart-card-title {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+
+/* ============================================================
+   TABLE
+   ============================================================ */
+
+.table-scroll,
+.heatmap-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+}
+
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.data-table th {
+  font-weight: 600;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-transform: none;
+  background: var(--paper);
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+
+/* ============================================================
+   CORRELATION HEATMAP
+   ============================================================ */
+
+.heatmap-grid {
+  display: grid;
+  gap: 1px;
+  padding: 16px;
+  width: max-content;
+}
+
+.heatmap-col-label,
+.heatmap-row-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.heatmap-col-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  justify-content: flex-start;
+  height: 90px;
+}
+
+.heatmap-row-label {
+  justify-content: flex-end;
+  padding-right: 8px;
+}
+
+.heatmap-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  color: rgba(0, 0, 0, 0.55);
+  border-radius: 2px;
+}
+
+
+/* ============================================================
+   AI DATA ANALYST
+   ============================================================ */
+
+.ai-analyst {
+  width: 100%;
+  margin-bottom: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+
+
+/* ============================================================
+   AI HEADER
+   ============================================================ */
+
+.ai-analyst-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+
+.ai-analyst-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-analyst-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.ai-clear-button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 13px;
+}
+
+.ai-clear-button:hover {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+
+
+/* ============================================================
+   AI CHAT AREA
+   ============================================================ */
+
+.ai-analyst-messages {
+  min-height: 260px;
+  max-height: 500px;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--paper-raised);
+}
+
+
+/* ============================================================
+   AI EMPTY STATE
+   ============================================================ */
+
+.ai-empty-state {
+  text-align: center;
+  padding: 25px 10px;
+}
+
+.ai-empty-icon {
+  font-size: 30px;
+  margin-bottom: 8px;
+}
+
+.ai-empty-state h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-empty-state p {
+  color: var(--ink-soft);
+  margin: 0 0 18px;
+  font-size: 13px;
+}
+
+
+/* ============================================================
+   AI SUGGESTIONS
+   ============================================================ */
+
+.ai-suggestions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-suggestions button {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 13px;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.ai-suggestions button:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: #e7f0ee;
+}
+
+
+/* ============================================================
+   AI MESSAGES
+   ============================================================ */
+
+.ai-message {
+  max-width: 80%;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  line-height: 1.5;
+}
+
+.ai-message-user {
+  margin-left: auto;
+  background: #e7f0ee;
+  border: 1px solid #c9deda;
+}
+
+.ai-message-assistant {
+  margin-right: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.ai-message-error {
+  margin-right: auto;
+  background: #fff0ec;
+  border: 1px solid #f0c8bb;
+}
+
+.ai-message-label {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-message-text {
+  line-height: 1.5;
+  font-size: 14px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.ai-thinking {
+  color: var(--ink-soft);
+  font-style: italic;
+  font-size: 14px;
+}
+
+
+/* ============================================================
+   AI INPUT
+   ============================================================ */
+
+.ai-analyst-input {
+  display: flex;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+
+.ai-analyst-input input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.ai-analyst-input input:focus {
+  border-color: var(--teal);
+}
+
+.ai-analyst-input input::placeholder {
+  color: var(--ink-soft);
+}
+
+.ai-analyst-input input:disabled {
+  background: var(--paper);
+  cursor: not-allowed;
+}
+
+.ai-analyst-input button {
+  min-width: 72px;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0 22px;
+  background: var(--teal);
+  color: #fff;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.ai-analyst-input button:hover:not(:disabled) {
+  background: var(--teal-dark);
+}
+
+.ai-analyst-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ============================================================
+   AI CHAT SCROLLBAR
+   ============================================================ */
+
+.ai-analyst-messages::-webkit-scrollbar {
+  width: 7px;
+}
+
+.ai-analyst-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-analyst-messages::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 10px;
+}
+
+.ai-analyst-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-soft);
+}
+
+
+/* ============================================================
+   MOBILE RESPONSIVE DESIGN
+   ============================================================ */
+
+@media (max-width: 720px) {
+
+  .app-header {
+    padding: 14px 18px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .app-main {
+    padding: 24px 18px 60px;
+  }
+
+  .intro-title {
+    font-size: 24px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .ai-analyst-header {
+    padding: 16px;
+  }
+
+  .ai-analyst-messages {
+    padding: 16px;
+    min-height: 220px;
+  }
+
+  .ai-message {
+    max-width: 92%;
+  }
+
+  .ai-analyst-input {
+    padding: 12px;
+  }
+
+  .ai-analyst-input input {
+    min-width: 0;
+  }
+
+  .ai-analyst-input button {
+    min-width: 62px;
+    padding: 0 16px;
+  }
+
+  .ai-suggestions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-suggestions button {
+    width: 100%;
+  }
+}
+
+
+/* ============================================================
+   REDUCED MOTION
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+
+  .progress-fill,
+  .upload-zone,
+  .ai-suggestions button,
+  .ai-analyst-input input,
+  .ai-analyst-input button {
+    transition: none;
+  }
+}
+
+.loading-card {
+  padding: 24px;
+  margin: 20px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 14px;
+  text-align: center;
+}
+
+
+/* ============================================================
+   AI DATA ANALYST — FINAL DARK DASHBOARD OVERRIDES
+   This section intentionally comes last so App.css cannot
+   reintroduce the old cream/white dashboard theme.
+   ============================================================ */
+
+:root {
+  --paper: #101827;
+  --paper-raised: #1b293d;
+  --ink: #edf3f8;
+  --ink-soft: #91a2b7;
+  --line: rgba(159, 181, 211, 0.18);
+
+  --teal: #69b7ca;
+  --teal-dark: #477f91;
+
+  --orange: #c5a66a;
+  --orange-dark: #d9828c;
+
+  --radius: 16px;
+}
+
+/* Global application background */
+html,
+body,
+#root {
+  min-height: 100%;
+  background: #101827 !important;
+  color: #edf3f8 !important;
+}
+
+body {
+  background:
+    radial-gradient(
+      circle at 12% 0%,
+      rgba(105, 183, 202, 0.08),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 90% 12%,
+      rgba(149, 133, 199, 0.07),
+      transparent 26%
+    ),
+    linear-gradient(
+      145deg,
+      #101827 0%,
+      #142033 55%,
+      #101827 100%
+    ) !important;
+}
+
+/* Application shell */
+.app-shell,
+.app-main,
+.dashboard,
+main {
+  background: transparent !important;
+  color: #edf3f8 !important;
+}
+
+.app-main {
+  max-width: 1440px;
+}
+
+/* Header */
+.app-header {
+  border-bottom: 1px solid rgba(159, 181, 211, 0.18) !important;
+  background: rgba(27, 41, 61, 0.96) !important;
+  color: #edf3f8 !important;
+  box-shadow: 0 8px 25px rgba(5, 12, 22, 0.14);
+}
+
+.brand-name,
+.header-filename {
+  color: #edf3f8 !important;
+}
+
+.header-filename {
+  color: #91a2b7 !important;
+}
+
+.brand-mark {
+  color: #69b7ca !important;
+}
+
+/* Primary/secondary buttons */
+.btn-primary {
+  background: #4e91a2 !important;
+  color: #eff8fa !important;
+}
+
+.btn-primary:hover {
+  background: #477f91 !important;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.035) !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+  color: #c5d1df !important;
+}
+
+/* Intro/upload screen */
+.intro-title {
+  color: #edf3f8 !important;
+}
+
+.intro-sub,
+.empty-note {
+  color: #91a2b7 !important;
+}
+
+.upload-zone {
+  background: #1b293d !important;
+  border-color: rgba(159, 181, 211, 0.22) !important;
+  color: #edf3f8 !important;
+}
+
+.upload-zone.is-drag {
+  background: rgba(105, 183, 202, 0.08) !important;
+  border-color: #69b7ca !important;
+}
+
+.upload-title {
+  color: #edf3f8 !important;
+}
+
+.upload-sub {
+  color: #91a2b7 !important;
+}
+
+.upload-mark {
+  color: #69b7ca !important;
+}
+
+.progress-track {
+  background: rgba(159, 181, 211, 0.16) !important;
+}
+
+.progress-fill {
+  background: #69b7ca !important;
+}
+
+/* ============================================================
+   METRICS — fixes the cream/yellow strip visible in screenshot
+   ============================================================ */
+
+.metrics-grid {
+  border: 1px solid rgba(159, 181, 211, 0.18) !important;
+  border-radius: 16px !important;
+  background: #1b293d !important;
+  box-shadow: 0 10px 28px rgba(5, 12, 22, 0.16);
+}
+
+.metric-cell {
+  background: transparent !important;
+  border-color: rgba(159, 181, 211, 0.12) !important;
+}
+
+.metric-value {
+  color: #edf3f8 !important;
+}
+
+.metric-label {
+  color: #91a2b7 !important;
+}
+
+/* General dashboard panels */
+.panel {
+  border-color: rgba(159, 181, 211, 0.18) !important;
+  color: #edf3f8 !important;
+}
+
+.panel-title {
+  color: #edf3f8 !important;
+}
+
+/* ============================================================
+   CHART CARDS — removes old white/cream backgrounds
+   ============================================================ */
+
+.chart-grid {
+  gap: 18px;
+}
+
+.chart-card {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(31, 46, 67, 0.96),
+      rgba(25, 39, 58, 0.96)
+    ) !important;
+  border: 1px solid rgba(159, 181, 211, 0.18) !important;
+  border-radius: 18px !important;
+  color: #edf3f8 !important;
+  box-shadow: 0 12px 32px rgba(5, 12, 22, 0.18) !important;
+}
+
+.chart-card-title {
+  color: #c5d1df !important;
+}
+
+/* Tables */
+.table-scroll,
+.heatmap-scroll {
+  background: #1b293d !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+}
+
+.data-table {
+  color: #c5d1df !important;
+}
+
+.data-table th {
+  color: #a6dbe5 !important;
+  background: #202f45 !important;
+  border-color: rgba(159, 181, 211, 0.14) !important;
+}
+
+.data-table td {
+  color: #c5d1df !important;
+  border-color: rgba(159, 181, 211, 0.08) !important;
+}
+
+/* Heatmap labels */
+.heatmap-col-label,
+.heatmap-row-label {
+  color: #91a2b7 !important;
+}
+
+/* ============================================================
+   AI ANALYST
+   ============================================================ */
+
+.ai-analyst {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(27, 41, 61, 0.98),
+      rgba(22, 35, 53, 0.98)
+    ) !important;
+  border: 1px solid rgba(159, 181, 211, 0.18) !important;
+  border-radius: 20px !important;
+  color: #edf3f8 !important;
+  box-shadow: 0 16px 42px rgba(5, 12, 22, 0.20);
+}
+
+.ai-analyst-header {
+  background: transparent !important;
+  border-color: rgba(159, 181, 211, 0.14) !important;
+}
+
+.ai-analyst-title {
+  color: #edf3f8 !important;
+}
+
+.ai-analyst-subtitle {
+  color: #91a2b7 !important;
+}
+
+.ai-analyst-messages {
+  background: rgba(16, 24, 39, 0.36) !important;
+}
+
+.ai-empty-state h3 {
+  color: #edf3f8 !important;
+}
+
+.ai-empty-state p,
+.ai-thinking {
+  color: #91a2b7 !important;
+}
+
+.ai-suggestions button {
+  background: #202f45 !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+  color: #c5d1df !important;
+}
+
+.ai-suggestions button:hover {
+  background: rgba(105, 183, 202, 0.10) !important;
+  border-color: rgba(103, 190, 214, 0.42) !important;
+  color: #a6dbe5 !important;
+}
+
+.ai-message-user {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(51, 83, 99, 0.92),
+      rgba(44, 57, 79, 0.94)
+    ) !important;
+  border-color: rgba(105, 183, 202, 0.25) !important;
+  color: #eaf5f7 !important;
+}
+
+.ai-message-assistant {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(37, 52, 73, 0.90),
+      rgba(30, 45, 65, 0.92)
+    ) !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+  color: #c5d1df !important;
+}
+
+.ai-message-error {
+  background: rgba(92, 48, 56, 0.42) !important;
+  border-color: rgba(217, 130, 140, 0.30) !important;
+}
+
+.ai-message-label {
+  color: #91a2b7 !important;
+}
+
+.ai-message-text {
+  color: #c5d1df !important;
+}
+
+/* AI input */
+.ai-analyst-input {
+  background: rgba(27, 41, 61, 0.97) !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+}
+
+.ai-analyst-input input {
+  color: #edf3f8 !important;
+  background: #172235 !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+}
+
+.ai-analyst-input input::placeholder {
+  color: #7f90a7 !important;
+}
+
+.ai-analyst-input button {
+  background: #4e91a2 !important;
+  color: #eff8fa !important;
+}
+
+.ai-analyst-input button:hover:not(:disabled) {
+  background: #477f91 !important;
+}
+
+/* Loading card */
+.loading-card {
+  background: #1b293d !important;
+  border-color: rgba(159, 181, 211, 0.18) !important;
+  color: #91a2b7 !important;
+}
+
+/* ============================================================
+   REMOVE OLD LIGHT-THEME LEAKS
+   ============================================================ */
+
+.loading-card,
+.upload-zone,
+.chart-card,
+.metrics-grid,
+.table-scroll,
+.heatmap-scroll,
+.ai-analyst,
+.ai-analyst-header,
+.ai-analyst-messages,
+.ai-analyst-input {
+  color-scheme: dark;
+}
+
+
+/* ============================================================
+   ANALYSIS CHART — COMPACT, CLEAN RESULT CARD
+   ============================================================ */
+
+.analysis-chart {
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 16px 18px 12px;
+  border: 1px solid rgba(159, 181, 211, 0.14);
+  border-radius: 16px;
+  background: rgba(20, 32, 51, 0.72);
+  overflow: hidden;
+}
+
+.analysis-chart-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 4px;
+}
+
+.analysis-chart-heading h3 {
+  margin: 0;
+  color: #edf3f8 !important;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.analysis-chart-canvas {
+  width: 100%;
+  min-height: 300px;
+}
+
+.analysis-chart-tooltip {
+  min-width: 145px;
+  padding: 10px 12px;
+  border: 1px solid rgba(159, 181, 211, 0.20);
+  border-radius: 10px;
+  background: #1b293d;
+  color: #c5d1df;
+  box-shadow: 0 12px 30px rgba(5, 12, 22, 0.28);
+}
+
+.analysis-chart-tooltip-label {
+  margin-bottom: 6px;
+  color: #edf3f8;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.analysis-chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.analysis-chart-tooltip-row strong {
+  color: #edf3f8;
+}
+
+.analysis-chart-tooltip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 7px;
+}
+
+.analysis-chart .recharts-responsive-container {
+  min-height: 300px;
+}
+
+@media (max-width: 650px) {
+  .analysis-chart {
+    padding: 13px 10px 8px;
+  }
+
+  .analysis-chart-canvas,
+  .analysis-chart .recharts-responsive-container {
+    min-height: 270px;
+  }
+}
+
+
+/* ============================================================
+   FINAL AI ANALYST LAYOUT FIX
+   Full-width assistant results + larger charts
+   ============================================================ */
+
+.ai-analyst,
+.ai-analyst-messages,
+.ai-message,
+.ai-message-assistant {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ai-message {
+  max-width: 100% !important;
+}
+
+.ai-message-user {
+  width: fit-content;
+  max-width: min(78%, 760px) !important;
+  margin-left: auto;
+}
+
+.ai-message-assistant {
+  width: 100%;
+  max-width: 100% !important;
+  margin-right: 0;
+}
+
+.ai-message-assistant .analysis-chart {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.analysis-chart {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.analysis-chart-canvas,
+.analysis-chart .recharts-responsive-container {
+  width: 100% !important;
+}
+
+@media (min-width: 900px) {
+  .ai-message-assistant .analysis-chart-canvas,
+  .ai-message-assistant .recharts-responsive-container {
+    min-height: 340px;
+  }
+}
+
+@media (max-width: 700px) {
+  .ai-message-user {
+    max-width: 92% !important;
+  }
+
+  .ai-message-assistant {
+    width: 100%;
+  }
+}
+
+/* ============================================================
+   FINAL UI POLISH — AI ANALYST
+   1. Taller chart
+   2. Premium suggestion cards
+   3. Stronger query/input area
+   ============================================================ */
+
+/* ---------- Chart: more breathing room ---------- */
+
+.analysis-chart {
+  padding: 18px 20px 14px !important;
+  border-radius: 18px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(29, 45, 66, 0.94),
+      rgba(23, 36, 54, 0.96)
+    ) !important;
+  border: 1px solid rgba(159, 181, 211, 0.16) !important;
+}
+
+.analysis-chart-heading {
+  margin-bottom: 8px !important;
+}
+
+.analysis-chart-heading h3 {
+  font-size: 15px !important;
+  letter-spacing: 0.1px;
+}
+
+.analysis-chart-canvas,
+.analysis-chart .recharts-responsive-container {
+  min-height: 380px !important;
+  height: 380px !important;
+}
+
+@media (max-width: 760px) {
+  .analysis-chart-canvas,
+  .analysis-chart .recharts-responsive-container {
+    min-height: 320px !important;
+    height: 320px !important;
+  }
+}
+
+/* ---------- Question suggestion cards ---------- */
+
+.ai-analyst-suggestions,
+.ai-suggestions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  margin: 16px 0 20px !important;
+}
+
+.ai-analyst-suggestions button,
+.ai-suggestions button {
+  position: relative;
+  display: flex !important;
+  align-items: center;
+  gap: 11px;
+  min-height: 54px;
+  padding: 13px 16px !important;
+  border: 1px solid rgba(159, 181, 211, 0.15) !important;
+  border-radius: 14px !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(32, 47, 69, 0.94),
+      rgba(27, 41, 61, 0.94)
+    ) !important;
+  color: #c5d1df !important;
+  text-align: left !important;
+  font-size: 12px !important;
+  font-weight: 550;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 5px 18px rgba(5, 12, 22, 0.10);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.ai-analyst-suggestions button::before,
+.ai-suggestions button::before {
+  width: 27px;
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 27px;
+  border-radius: 8px;
+  background: rgba(105, 183, 202, 0.10);
+  color: #a6dbe5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-analyst-suggestions button:hover,
+.ai-suggestions button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(103, 190, 214, 0.34) !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(39, 59, 82, 0.98),
+      rgba(31, 48, 70, 0.98)
+    ) !important;
+  color: #edf3f8 !important;
+  box-shadow: 0 9px 24px rgba(5, 12, 22, 0.18);
+}
+
+.ai-analyst-suggestions button:active,
+.ai-suggestions button:active {
+  transform: translateY(0);
+}
+
+/* ---------- Query box: clear focal point ---------- */
+
+.ai-analyst-form,
+.ai-analyst-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100% !important;
+  min-height: 66px;
+  padding: 8px !important;
+  margin-top: 14px;
+  border: 1px solid rgba(105, 183, 202, 0.20) !important;
+  border-radius: 17px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(31, 47, 68, 0.98),
+      rgba(25, 39, 58, 0.98)
+    ) !important;
+  box-shadow:
+    0 10px 30px rgba(5, 12, 22, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.ai-analyst-form:focus-within,
+.ai-analyst-input:focus-within {
+  border-color: rgba(105, 183, 202, 0.48) !important;
+  box-shadow:
+    0 0 0 3px rgba(105, 183, 202, 0.07),
+    0 12px 32px rgba(5, 12, 22, 0.18);
+}
+
+.ai-analyst-form input,
+.ai-analyst-form textarea,
+.ai-analyst-input input,
+.ai-analyst-input textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 14px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  color: #edf3f8 !important;
+  font-size: 14px !important;
+}
+
+.ai-analyst-form input::placeholder,
+.ai-analyst-form textarea::placeholder,
+.ai-analyst-input input::placeholder,
+.ai-analyst-input textarea::placeholder {
+  color: #91a2b7 !important;
+}
+
+.ai-analyst-form button,
+.ai-analyst-input button {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0 16px !important;
+  border: 0 !important;
+  border-radius: 13px !important;
+  background: #4e91a2 !important;
+  color: #eff8fa !important;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.ai-analyst-form button:hover:not(:disabled),
+.ai-analyst-input button:hover:not(:disabled) {
+  background: #477f91 !important;
+  transform: translateY(-1px);
+}
+
+.ai-analyst-form button:disabled,
+.ai-analyst-input button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------- Agent trace / SQL: compact and consistent ---------- */
+
+.agent-trace,
+.agent-execution-trace {
+  margin-top: 12px !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(159, 181, 211, 0.13) !important;
+  border-radius: 12px !important;
+  background: rgba(27, 41, 61, 0.62) !important;
+}
+
+.agent-trace summary,
+.agent-execution-trace summary {
+  padding: 11px 14px;
+  color: #c5d1df !important;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-trace summary:hover,
+.agent-execution-trace summary:hover {
+  color: #a6dbe5 !important;
+  background: rgba(105, 183, 202, 0.045);
+}
+
+/* ---------- Responsive suggestions ---------- */
+
+@media (max-width: 680px) {
+  .ai-analyst-suggestions,
+  .ai-suggestions {
+    grid-template-columns: 1fr !important;
+  }
+
+  .ai-analyst-suggestions button,
+  .ai-suggestions button {
+    min-height: 50px;
+  }
+}
+
+/* ============================================================
+   FINAL AI ANALYST PRESENTATION POLISH
+   Compact chart + refined suggestions + premium query composer
+   ============================================================ */
+
+/* ---------- Chart: compact dashboard height ---------- */
+
+.analysis-chart {
+  padding: 16px 18px 10px !important;
+  border-radius: 18px !important;
+}
+
+.analysis-chart-canvas,
+.analysis-chart .recharts-responsive-container {
+  min-height: 340px !important;
+  height: 340px !important;
+}
+
+.analysis-chart-heading {
+  margin-bottom: 6px !important;
+}
+
+.analysis-chart-heading h3 {
+  font-size: 15px !important;
+  font-weight: 650 !important;
+}
+
+@media (max-width: 760px) {
+  .analysis-chart-canvas,
+  .analysis-chart .recharts-responsive-container {
+    min-height: 300px !important;
+    height: 300px !important;
+  }
+}
+
+/* ---------- Suggestions: cleaner premium cards ---------- */
+
+.ai-analyst-suggestions,
+.ai-suggestions {
+  grid-template-columns: repeat(2, minmax(260px, 1fr)) !important;
+  gap: 10px !important;
+  margin: 14px 0 18px !important;
+}
+
+.ai-analyst-suggestions button,
+.ai-suggestions button {
+  min-height: 50px !important;
+  padding: 11px 14px !important;
+  border-radius: 13px !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(31, 47, 68, 0.92),
+      rgba(25, 39, 58, 0.94)
+    ) !important;
+  border: 1px solid rgba(159, 181, 211, 0.14) !important;
+  box-shadow: 0 4px 14px rgba(5, 12, 22, 0.08) !important;
+}
+
+.ai-analyst-suggestions button::before,
+.ai-suggestions button::before {
+  width: 25px !important;
+  height: 25px !important;
+  flex-basis: 25px !important;
+  border-radius: 7px !important;
+  background: rgba(105, 183, 202, 0.08) !important;
+  color: #a6dbe5 !important;
+}
+
+.ai-analyst-suggestions button:hover,
+.ai-suggestions button:hover {
+  transform: translateY(-1px) !important;
+  border-color: rgba(105, 183, 202, 0.30) !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(38, 57, 79, 0.98),
+      rgba(30, 47, 68, 0.98)
+    ) !important;
+}
+
+/* ---------- Query composer: strongest visual focal point ---------- */
+
+.ai-analyst-form,
+.ai-analyst-input {
+  min-height: 62px !important;
+  margin-top: 12px !important;
+  padding: 7px !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(105, 183, 202, 0.22) !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(31, 47, 68, 0.98),
+      rgba(24, 38, 57, 0.98)
+    ) !important;
+  box-shadow:
+    0 8px 24px rgba(5, 12, 22, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+}
+
+.ai-analyst-form:focus-within,
+.ai-analyst-input:focus-within {
+  border-color: rgba(105, 183, 202, 0.42) !important;
+  box-shadow:
+    0 0 0 3px rgba(105, 183, 202, 0.06),
+    0 10px 28px rgba(5, 12, 22, 0.16) !important;
+}
+
+.ai-analyst-form input,
+.ai-analyst-form textarea,
+.ai-analyst-input input,
+.ai-analyst-input textarea {
+  min-height: 46px !important;
+  padding: 0 13px !important;
+  font-size: 13px !important;
+}
+
+.ai-analyst-form button,
+.ai-analyst-input button {
+  min-width: 46px !important;
+  min-height: 46px !important;
+  border-radius: 12px !important;
+}
+
+/* ---------- Conversation spacing ---------- */
+
+.ai-message-assistant,
+.chat-message.assistant {
+  margin-bottom: 14px !important;
+}
+
+.ai-message-user,
+.chat-message.user {
+  margin-bottom: 10px !important;
+}
+
+/* ---------- Keep trace controls visually secondary ---------- */
+
+.agent-trace,
+.agent-execution-trace {
+  opacity: 0.96;
+}
+
+.agent-trace summary,
+.agent-execution-trace summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 680px) {
+  .ai-analyst-suggestions,
+  .ai-suggestions {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================================
+   FINAL CHART + QUERY INTERACTION POLISH
+   ============================================================ */
+
+/* Bring category bars closer together without shrinking the card. */
+.analysis-chart .recharts-bar-rectangle {
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.analysis-chart .recharts-bar-rectangle:hover {
+  opacity: 0.88;
+  filter: brightness(1.06);
+}
+
+/* Recharts bar spacing is controlled primarily by barCategoryGap.
+   This keeps the four-region chart compact and readable. */
+.analysis-chart .recharts-bar {
+  max-width: 100%;
+}
+
+/* Stronger, cleaner query composer. */
+.ai-analyst-form,
+.ai-analyst-input {
+  min-height: 68px !important;
+  padding: 8px !important;
+  border: 1px solid rgba(105, 183, 202, 0.28) !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(34, 51, 73, 0.98),
+      rgba(25, 40, 59, 0.98)
+    ) !important;
+  box-shadow:
+    0 10px 30px rgba(5, 12, 22, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+}
+
+.ai-analyst-form input,
+.ai-analyst-form textarea,
+.ai-analyst-input input,
+.ai-analyst-input textarea {
+  min-height: 50px !important;
+  font-size: 14px !important;
+  font-weight: 450;
+}
+
+.ai-analyst-form input::placeholder,
+.ai-analyst-form textarea::placeholder,
+.ai-analyst-input input::placeholder,
+.ai-analyst-input textarea::placeholder {
+  color: #9aaabd !important;
+}
+
+.ai-analyst-form button,
+.ai-analyst-input button {
+  min-width: 58px !important;
+  min-height: 50px !important;
+  padding: 0 18px !important;
+  border-radius: 13px !important;
+  background:
+    linear-gradient(
+      135deg,
+      #5a9eae,
+      #4e8d9d
+    ) !important;
+  box-shadow: 0 6px 16px rgba(69, 130, 146, 0.18);
+}
+
+.ai-analyst-form button:hover:not(:disabled),
+.ai-analyst-input button:hover:not(:disabled) {
+  background:
+    linear-gradient(
+      135deg,
+      #67aebe,
+      #528f9f
+    ) !important;
+  transform: translateY(-1px);
+}
+
+/* Keep suggestions compact and visually connected to the composer. */
+.ai-analyst-suggestions,
+.ai-suggestions {
+  gap: 9px !important;
+  margin-bottom: 14px !important;
+}
+
+.ai-analyst-suggestions button,
+.ai-suggestions button {
+  min-height: 48px !important;
+  padding: 10px 13px !important;
+  border-radius: 12px !important;
+}
+
+/* On large screens, don't let suggestion cards become unnecessarily huge. */
+@media (min-width: 1000px) {
+  .ai-analyst-suggestions,
+  .ai-suggestions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .ai-analyst-suggestions button,
+  .ai-suggestions button {
+    max-width: 100%;
+  }
+}
+
+/* On smaller screens, preserve readability. */
+@media (max-width: 680px) {
+  .ai-analyst-form,
+  .ai-analyst-input {
+    min-height: 62px !important;
+  }
+
+  .ai-analyst-form button,
+  .ai-analyst-input button {
+    min-width: 50px !important;
+  }
+}
+
+/* ============================================================
+   AI ANALYST — FINAL INTERACTION AREA
+   Make the query composer the primary visual focus.
+   ============================================================ */
+
+/* ---------- Query composer shell ---------- */
+
+.ai-analyst-form,
+.ai-analyst-input {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  min-height: 72px !important;
+  margin: 14px 0 18px !important;
+  padding: 8px 8px 8px 16px !important;
+  box-sizing: border-box !important;
+  border: 1px solid rgba(105, 183, 202, 0.32) !important;
+  border-radius: 18px !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(36, 55, 78, 0.98),
+      rgba(25, 41, 61, 0.98)
+    ) !important;
+  box-shadow:
+    0 12px 34px rgba(5, 12, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+
+.ai-analyst-form::before,
+.ai-analyst-input::before {
+  content: "✦" !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  flex: 0 0 32px !important;
+  margin-right: 8px !important;
+  border-radius: 10px !important;
+  background: rgba(105, 183, 202, 0.10) !important;
+  color: #a6dbe5 !important;
+  font-size: 14px !important;
+}
+
+.ai-analyst-form:focus-within,
+.ai-analyst-input:focus-within {
+  border-color: rgba(105, 183, 202, 0.56) !important;
+  box-shadow:
+    0 0 0 3px rgba(105, 183, 202, 0.075),
+    0 14px 36px rgba(5, 12, 22, 0.22) !important;
+}
+
+/* ---------- Input ---------- */
+
+.ai-analyst-form input,
+.ai-analyst-form textarea,
+.ai-analyst-input input,
+.ai-analyst-input textarea {
+  flex: 1 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 52px !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  color: #edf3f8 !important;
+  font-size: 14px !important;
+  font-weight: 450 !important;
+}
+
+.ai-analyst-form input::placeholder,
+.ai-analyst-form textarea::placeholder,
+.ai-analyst-input input::placeholder,
+.ai-analyst-input textarea::placeholder {
+  color: #a0afc0 !important;
+  opacity: 1 !important;
+}
+
+/* ---------- Ask button ---------- */
+
+.ai-analyst-form button,
+.ai-analyst-input button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  min-width: 76px !important;
+  height: 52px !important;
+  padding: 0 18px !important;
+  flex: 0 0 auto !important;
+  border: 0 !important;
+  border-radius: 13px !important;
+  background:
+    linear-gradient(
+      135deg,
+      #5d9eae,
+      #4e8999
+    ) !important;
+  color: #f2fafb !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 7px 18px rgba(69, 130, 146, 0.20) !important;
+  cursor: pointer !important;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease !important;
+}
+
+.ai-analyst-form button::after,
+.ai-analyst-input button::after {
+  content: "→";
+  font-size: 15px;
+  line-height: 1;
+}
+
+.ai-analyst-form button:hover:not(:disabled),
+.ai-analyst-input button:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+  background:
+    linear-gradient(
+      135deg,
+      #6aabba,
+      #5593a3
+    ) !important;
+  box-shadow: 0 9px 22px rgba(69, 130, 146, 0.26) !important;
+}
+
+.ai-analyst-form button:active:not(:disabled),
+.ai-analyst-input button:active:not(:disabled) {
+  transform: translateY(0) !important;
+}
+
+.ai-analyst-form button:disabled,
+.ai-analyst-input button:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+}
+
+/* ---------- Suggestions section ---------- */
+
+.ai-analyst-suggestions,
+.ai-suggestions {
+  position: relative !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  width: 100% !important;
+  margin: 8px 0 16px !important;
+  padding-top: 28px !important;
+}
+
+.ai-analyst-suggestions::before,
+.ai-suggestions::before {
+  content: "SUGGESTED ANALYSIS" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 2px !important;
+  color: #91a2b7 !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+}
+
+.ai-analyst-suggestions button,
+.ai-suggestions button {
+  min-height: 50px !important;
+  padding: 10px 14px !important;
+  border: 1px solid rgba(159, 181, 211, 0.15) !important;
+  border-radius: 13px !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(31, 48, 69, 0.92),
+      rgba(25, 40, 59, 0.96)
+    ) !important;
+  color: #c5d1df !important;
+  text-align: left !important;
+  font-size: 12px !important;
+  font-weight: 550 !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 14px rgba(5, 12, 22, 0.08) !important;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease !important;
+}
+
+.ai-analyst-suggestions button:hover,
+.ai-suggestions button:hover {
+  transform: translateY(-2px) !important;
+  border-color: rgba(105, 183, 202, 0.38) !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(39, 59, 81, 0.98),
+      rgba(29, 47, 68, 0.98)
+    ) !important;
+  color: #edf3f8 !important;
+  box-shadow: 0 9px 22px rgba(5, 12, 22, 0.16) !important;
+}
+
+.ai-analyst-suggestions button:focus-visible,
+.ai-suggestions button:focus-visible {
+  outline: 2px solid rgba(105, 183, 202, 0.42) !important;
+  outline-offset: 2px !important;
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 680px) {
+  .ai-analyst-form,
+  .ai-analyst-input {
+    min-height: 64px !important;
+    padding-left: 10px !important;
+  }
+
+  .ai-analyst-form::before,
+  .ai-analyst-input::before {
+    display: none !important;
+  }
+
+  .ai-analyst-form button,
+  .ai-analyst-input button {
+    min-width: 58px !important;
+    padding: 0 13px !important;
+  }
+
+  .ai-analyst-suggestions,
+  .ai-suggestions {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================================
+   AI ANALYST — FINAL ANSWER CARD
+   Make the analytical result the primary visual output.
+   ============================================================ */
+
+.ai-message-assistant,
+.chat-message.assistant {
+  position: relative !important;
+  box-sizing: border-box !important;
+  padding: 18px 20px !important;
+  margin: 0 0 14px !important;
+  border: 1px solid rgba(105, 183, 202, 0.20) !important;
+  border-left: 3px solid rgba(105, 183, 202, 0.62) !important;
+  border-radius: 16px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(29, 45, 66, 0.96),
+      rgba(23, 37, 55, 0.96)
+    ) !important;
+  box-shadow:
+    0 9px 26px rgba(5, 12, 22, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+}
+
+.ai-message-assistant::before,
+.chat-message.assistant::before {
+  content: "✦" !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important;
+  height: 28px !important;
+  margin-right: 9px !important;
+  vertical-align: middle !important;
+  border-radius: 8px !important;
+  background: rgba(105, 183, 202, 0.10) !important;
+  color: #a6dbe5 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.ai-message-assistant .ai-message-text,
+.ai-message-assistant .chat-message-text,
+.chat-message.assistant .ai-message-text,
+.chat-message.assistant .chat-message-text {
+  color: #edf3f8 !important;
+  font-size: 14px !important;
+  line-height: 1.65 !important;
+  font-weight: 500 !important;
+}
+
+/* Answer text should remain visually dominant. */
+.ai-message-assistant .answer,
+.ai-message-assistant .answer-text,
+.ai-message-assistant .ai-answer,
+.chat-message.assistant .answer,
+.chat-message.assistant .answer-text,
+.chat-message.assistant .ai-answer {
+  color: #edf3f8 !important;
+  font-size: 15px !important;
+  line-height: 1.65 !important;
+  font-weight: 600 !important;
+}
+
+/* Prevent the icon from affecting chart/result layout. */
+.ai-message-assistant .analysis-chart,
+.chat-message.assistant .analysis-chart {
+  margin-top: 14px !important;
+}
+
+/* Trace and SQL stay secondary to the answer. */
+.ai-message-assistant .agent-trace,
+.ai-message-assistant .agent-execution-trace,
+.ai-message-assistant .sql-block,
+.ai-message-assistant .sql-section,
+.chat-message.assistant .agent-trace,
+.chat-message.assistant .agent-execution-trace,
+.chat-message.assistant .sql-block,
+.chat-message.assistant .sql-section {
+  border-color: rgba(159, 181, 211, 0.12) !important;
+  background: rgba(18, 30, 46, 0.52) !important;
+}
+
+/* User message remains distinct from the analytical answer. */
+.ai-message-user,
+.chat-message.user {
+  border: 1px solid rgba(159, 181, 211, 0.14) !important;
+  background: rgba(38, 52, 71, 0.82) !important;
+  color: #d8e2eb !important;
+}
+
+/* Small screens */
+@media (max-width: 680px) {
+  .ai-message-assistant,
+  .chat-message.assistant {
+    padding: 15px 14px !important;
+    border-left-width: 2px !important;
+  }
+
+  .ai-message-assistant::before,
+  .chat-message.assistant::before {
+    width: 25px !important;
+    height: 25px !important;
+  }
+}
+
+/* ============================================================
+   AI ANALYST — PRODUCT FEATURES
+   Persistence, export, follow-ups, copy, loading state.
+   ============================================================ */
+
+.ai-analyst-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-analyst-actions button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 9px;
+}
+
+.ai-analyst-export {
+  border: 1px solid rgba(105, 183, 202, 0.18) !important;
+  background: rgba(105, 183, 202, 0.07) !important;
+  color: #a6dbe5 !important;
+}
+
+.assistant-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 0 2px;
+}
+
+.assistant-message-actions button {
+  padding: 5px 9px;
+  border: 1px solid rgba(159, 181, 211, 0.12);
+  border-radius: 8px;
+  background: rgba(159, 181, 211, 0.045);
+  color: #91a2b7;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.assistant-message-actions button:hover {
+  border-color: rgba(105, 183, 202, 0.28);
+  color: #a6dbe5;
+}
+
+.ai-followups {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(159, 181, 211, 0.10);
+}
+
+.ai-followups > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #91a2b7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-followups > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ai-followups button {
+  padding: 7px 10px;
+  border: 1px solid rgba(105, 183, 202, 0.15);
+  border-radius: 9px;
+  background: rgba(105, 183, 202, 0.055);
+  color: #b8dce4;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-followups button:hover {
+  border-color: rgba(105, 183, 202, 0.32);
+  background: rgba(105, 183, 202, 0.10);
+}
+
+.ai-loading-message {
+  display: flex !important;
+  align-items: center;
+  gap: 5px;
+  min-height: 46px;
+}
+
+.ai-loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #69b7ca;
+  animation: ai-analyst-pulse 1.1s infinite ease-in-out;
+}
+
+.ai-loading-dot:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.ai-loading-dot:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+.ai-loading-text {
+  margin-left: 5px;
+  color: #a9b8c8;
+  font-size: 12px;
+}
+
+@keyframes ai-analyst-pulse {
+  0%, 70%, 100% {
+    opacity: 0.28;
+    transform: scale(0.85);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (max-width: 680px) {
+  .ai-analyst-actions {
+    gap: 5px;
+  }
+
+  .ai-analyst-actions button {
+    padding: 6px 9px;
+    font-size: 11px;
+  }
+
+  .ai-followups > div {
+    flex-direction: column;
+  }
+
+  .ai-followups button {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+/* ============================================================
+   FINAL ANALYST LAYOUT — ANSWER FIRST, DATASET SECOND
+   ============================================================ */
+
+.dashboard-ai-section {
+  margin-bottom: 28px !important;
+}
+
+.dashboard-overview-heading-section {
+  margin-top: 10px !important;
+  margin-bottom: 10px !important;
+}
+
+.dataset-overview-heading {
+  padding: 8px 4px 6px;
+}
+
+.dataset-overview-heading span {
+  display: block;
+  margin-bottom: 5px;
+  color: #91a2b7;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.dataset-overview-heading h2 {
+  margin: 0;
+  color: #edf3f8;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.dataset-overview-heading p {
+  margin: 6px 0 0;
+  color: #91a2b7;
+  font-size: 12px;
+}
+
+/* Keep each assistant result as one cohesive unit. */
+.ai-analyst-chat .chat-message.assistant {
+  overflow: hidden !important;
+}
+
+.ai-analyst-chat .chat-message.assistant .ai-answer-label,
+.ai-analyst-chat .chat-message.user .ai-answer-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: rgba(105, 183, 202, 0.08);
+  color: #a6dbe5;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.ai-analyst-chat .chat-message.user .ai-answer-label {
+  background: rgba(159, 181, 211, 0.07);
+  color: #aab8c8;
+}
+
+.ai-analyst-chat .chat-message.assistant .chat-message-text {
+  margin-bottom: 10px !important;
+}
+
+/* Charts belong directly to the answer, not as a separate story card. */
+.ai-analyst-chat .chat-message.assistant .analysis-chart,
+.ai-analyst-chat .chat-message.assistant > div[class*="chart"] {
+  margin-top: 12px !important;
+  margin-bottom: 10px !important;
+}
+
+/* Technical details stay compact and visually secondary. */
+.ai-analyst-chat .chat-message.assistant .agent-trace,
+.ai-analyst-chat .chat-message.assistant .sql-details {
+  margin-top: 8px !important;
+}
+
+@media (max-width: 680px) {
+  .dataset-overview-heading h2 {
+    font-size: 19px;
+  }
+}
