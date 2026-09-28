@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { askDataset } from "../api/client.js";
 import AnalysisChart from "./AnalysisChart";
 import DataStory from "./DataStory";
@@ -115,7 +115,7 @@ function isQualityRow(row) {
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") {
-    return "—";
+    return "â€”";
   }
 
   const number = Number(value);
@@ -895,11 +895,13 @@ export default function AIAnalyst({ datasetId }) {
                 !qualityQuestion &&
                 !metricResult && (
                   <DataStory
-                    rows={message.rows}
-                    visualization={
-                      message.visualization
-                    }
-                  />
+                      result={{
+                        type: message.resultType,
+                        answer: message.text,
+                        rows: message.rows,
+                        visualization: message.visualization,
+                      }}
+                    />
                 )}
 
               {qualityQuestion &&
@@ -969,6 +971,8 @@ export default function AIAnalyst({ datasetId }) {
     </section>
   );
 }
+
+
 
 
 

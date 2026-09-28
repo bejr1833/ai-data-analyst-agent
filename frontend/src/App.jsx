@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useState } from "react";
+﻿import React, { lazy, Suspense, useEffect, useState } from "react";
 
 import FileUpload from "./components/FileUpload.jsx";
 import MetricsGrid from "./components/MetricsGrid.jsx";
@@ -453,7 +453,7 @@ export default function App() {
         <div className="brand">
 
           <span className="brand-mark">
-            ▤
+            â–¤
           </span>
 
           <span className="brand-name">
@@ -681,7 +681,7 @@ export default function App() {
             {charts && (
               <section className="dashboard-section dashboard-correlation-section">
                 <CorrelationHeatmap
-                  correlation={
+                  data={
                     charts.correlation || []
                   }
                 />
@@ -716,6 +716,7 @@ export default function App() {
   );
 
 }
+
 
 
 
