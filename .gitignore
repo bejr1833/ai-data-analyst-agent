@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Generated data
+storage/
+backend/storage/
+frontend/dist/
+
+# Logs
+*.log
+
+# Testing / tooling
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
