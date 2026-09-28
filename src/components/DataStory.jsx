@@ -19,7 +19,7 @@ function formatNumber(value) {
     return String(value);
   }
 
-  return new Intl.NumberFormat("en-IN", {
+  return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
   }).format(number);
 }
@@ -36,7 +36,7 @@ function formatPercentage(value) {
     return "N/A";
   }
 
-  return `${number.toFixed(1)}%`;
+  return `${number.toFixed(2)}%`;
 }
 
 
@@ -83,8 +83,9 @@ function getCorrelationDescription(value) {
 
 
 /* ==========================================================
-   GROUPED ANALYSIS STORY
+   ANOMALY STORY
    ========================================================== */
+
 function buildAnomalyStory(rows, answer) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return (
@@ -120,6 +121,10 @@ function buildAnomalyStory(rows, answer) {
 }
 
 
+/* ==========================================================
+   GROUPED ANALYSIS STORY
+   ========================================================== */
+
 function buildGroupedStory(rows, visualization) {
   if (
     !Array.isArray(rows) ||
@@ -138,13 +143,15 @@ function buildGroupedStory(rows, visualization) {
 
   const values = rows
     .map((row) => ({
-      category: row[x],
-      value: Number(row[y]),
+      category: row?.[x],
+      value: Number(row?.[y]),
     }))
     .filter(
       (item) =>
         item.category !== undefined &&
-        !Number.isNaN(item.value)
+        item.category !== null &&
+        String(item.category).trim() !== "" &&
+        Number.isFinite(item.value)
     );
 
   if (values.length === 0) {
@@ -163,25 +170,103 @@ function buildGroupedStory(rows, visualization) {
     0
   );
 
+  /* ========================================================
+     SINGLE CATEGORY
+     ======================================================== */
+
+  if (values.length === 1) {
+    return (
+      `The ${y} value for ${highest.category} is ` +
+      `${formatNumber(highest.value)}.`
+    );
+  }
+
+
+  /* ========================================================
+     TWO-CATEGORY COMPARISON
+     ======================================================== */
+
+  if (values.length === 2) {
+    const first = values[0];
+    const second = values[1];
+
+    const difference =
+      Math.abs(first.value - second.value);
+
+    if (difference === 0) {
+      return (
+        `${first.category} and ${second.category} have the same ` +
+        `${y} value of ${formatNumber(first.value)}. ` +
+        `Both contribute approximately 50.0% of the selected comparison total.`
+      );
+    }
+
+    const higher =
+      first.value >= second.value
+        ? first
+        : second;
+
+    const lower =
+      first.value >= second.value
+        ? second
+        : first;
+
+    const percentageDifference =
+      lower.value !== 0
+        ? (difference / Math.abs(lower.value)) * 100
+        : null;
+
+    const higherShare =
+      total !== 0
+        ? (higher.value / total) * 100
+        : 0;
+
+    return (
+      `${higher.category} generated ${formatNumber(difference)} more ` +
+      `${y} than ${lower.category}. ` +
+      `This represents a ` +
+      `${
+        percentageDifference !== null
+          ? formatPercentage(percentageDifference)
+          : "N/A"
+      } difference relative to ${lower.category}. ` +
+      `${higher.category} accounts for approximately ` +
+      `${formatPercentage(higherShare)} of the selected comparison total.`
+    );
+  }
+
+
+  /* ========================================================
+     MULTI-CATEGORY GROUPED ANALYSIS
+     ======================================================== */
+
+  const spread =
+    highest.value - lowest.value;
+
+  const spreadPercentage =
+    lowest.value !== 0
+      ? (spread / Math.abs(lowest.value)) * 100
+      : null;
+
   const highestShare =
     total !== 0
       ? (highest.value / total) * 100
       : 0;
-
-  if (values.length === 1) {
-    return (
-      `The ${y} value for ${highest.category} ` +
-      `is ${formatNumber(highest.value)}.`
-    );
-  }
 
   return (
     `${highest.category} has the highest ${y} at ` +
     `${formatNumber(highest.value)}, while ` +
     `${lowest.category} has the lowest at ` +
     `${formatNumber(lowest.value)}. ` +
+    `The gap between the highest and lowest categories is ` +
+    `${formatNumber(spread)}` +
+    `${
+      spreadPercentage !== null
+        ? `, or approximately ${formatPercentage(spreadPercentage)} relative to the lowest category`
+        : ""
+    }. ` +
     `${highest.category} contributes approximately ` +
-    `${formatPercentage(highestShare)} of the total ${y}.`
+    `${formatPercentage(highestShare)} of the selected total.`
   );
 }
 
@@ -360,17 +445,17 @@ export default function DataStory({
 
   let story = null;
 
-  /* ========================================================
-     GROUPED ANALYSIS
-     ======================================================== */
-  if (type === "anomaly_detection") {
-  story = buildAnomalyStory(
-    rows,
-    answer
-  );
-}
 
-  if (
+  /* ========================================================
+     STORY SELECTION
+     ======================================================== */
+
+  if (type === "anomaly_detection") {
+    story = buildAnomalyStory(
+      rows,
+      answer
+    );
+  } else if (
     type === "grouped_analysis" ||
     (
       visualization &&
@@ -382,95 +467,46 @@ export default function DataStory({
       rows,
       visualization
     );
-  }
-
-
-  /* ========================================================
-     STATISTICAL ANALYSIS
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "statistical_analysis"
   ) {
     story = buildStatisticalStory(
       rows,
       answer
     );
-  }
-
-
-  /* ========================================================
-     TREND ANALYSIS
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "trend_analysis"
   ) {
     story = buildTrendStory(
       rows,
       visualization
     );
-  }
-
-
-  /* ========================================================
-     FORECAST
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "forecast"
   ) {
     story =
       answer ||
       "The forecast has been generated from the available historical data.";
-  }
-
-
-  /* ========================================================
-     SCENARIO
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "scenario"
   ) {
     story =
       answer ||
       "The scenario analysis shows the projected impact of the requested change.";
-  }
-
-
-  /* ========================================================
-     NUMERIC ANALYSIS
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "numeric_analysis"
   ) {
     story = buildNumericStory(
       rows,
       answer
     );
-  }
-
-
-  /* ========================================================
-     BUSINESS INSIGHT
-     ======================================================== */
-
-  else if (
+  } else if (
     type === "business_insight"
   ) {
     story =
       answer ||
       "The analysis identifies the most relevant business result from the dataset.";
-  }
-
-
-  /* ========================================================
-     FALLBACK
-     ======================================================== */
-
-  else {
+  } else {
     story = answer || null;
   }
 
@@ -499,12 +535,15 @@ export default function DataStory({
         border: "1px solid #e2e8f0",
       }}
     >
-
       <div
         style={{
           fontSize: "15px",
           fontWeight: 700,
           marginBottom: "8px",
+          color: "#0f172a",
+          display: "block",
+          visibility: "visible",
+          opacity: 1,
         }}
       >
         💡 Key Insight
@@ -515,11 +554,13 @@ export default function DataStory({
           fontSize: "14px",
           lineHeight: 1.6,
           color: "#334155",
+          display: "block",
+          visibility: "visible",
+          opacity: 1,
         }}
       >
         {story}
       </div>
-
     </div>
   );
 }

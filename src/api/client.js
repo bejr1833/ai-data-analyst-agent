@@ -15,12 +15,15 @@ async function handle(res) {
       detail =
         body.detail ||
         detail;
-
     } catch (_) {
       // Ignore JSON parsing errors.
     }
 
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = res.status;
+    error.detail = detail;
+
+    throw error;
   }
 
   return res.json();

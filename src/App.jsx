@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { lazy, Suspense, useEffect, useState } from "react";
 
 import FileUpload from "./components/FileUpload.jsx";
 import MetricsGrid from "./components/MetricsGrid.jsx";
-import HistogramGrid from "./components/HistogramGrid.jsx";
-import CategoricalGrid from "./components/CategoricalGrid.jsx";
-import MissingChart from "./components/MissingChart.jsx";
+const HistogramGrid = lazy(() => import("./components/HistogramGrid.jsx"));
+const CategoricalGrid = lazy(() => import("./components/CategoricalGrid.jsx"));
+const MissingChart = lazy(() => import("./components/MissingChart.jsx"));
 import CorrelationHeatmap from "./components/CorrelationHeatmap.jsx";
 import ColumnTable from "./components/ColumnTable.jsx";
 import AIAnalyst from "./components/AIAnalyst.jsx";
+import DataStory from "./components/DataStory.jsx";
 
 import "./App.css";
 
@@ -645,11 +646,13 @@ export default function App() {
 
             {charts && (
               <section className="dashboard-section dashboard-histograms-section">
+                <Suspense fallback={<div className="loading-card">Loading numeric distributions...</div>}>
                 <HistogramGrid
                   histograms={
                     charts.histograms || []
                   }
                 />
+              </Suspense>
               </section>
             )}
 
@@ -660,11 +663,13 @@ export default function App() {
 
             {charts && (
               <section className="dashboard-section dashboard-categorical-section">
+                <Suspense fallback={<div className="loading-card">Loading categorical charts...</div>}>
                 <CategoricalGrid
                   charts={
                     charts.categorical_charts || []
                   }
                 />
+              </Suspense>
               </section>
             )}
 
@@ -690,11 +695,13 @@ export default function App() {
 
             {charts && (
               <section className="dashboard-section dashboard-missing-section">
+                <Suspense fallback={<div className="loading-card">Loading missing-data chart...</div>}>
                 <MissingChart
                   missing={
                     charts.missing_chart || []
                   }
                 />
+              </Suspense>
               </section>
             )}
 
@@ -709,4 +716,7 @@ export default function App() {
   );
 
 }
+
+
+
 

@@ -9,13 +9,15 @@ export default function FileUpload({ onFile, busy, progress, error }) {
       e.preventDefault();
       setDragOver(false);
 
+      if (busy) return;
+
       const file = e.dataTransfer.files?.[0];
 
       if (file) {
         onFile(file);
       }
     },
-    [onFile]
+    [onFile, busy]
   );
 
   const handleFileChange = (e) => {
@@ -29,14 +31,23 @@ export default function FileUpload({ onFile, busy, progress, error }) {
     e.target.value = "";
   };
 
+  const uploadMark = busy
+    ? progress >= 100
+      ? "?"
+      : "?"
+    : "+";
+
   return (
     <div className="upload-wrap">
       <div
         className={`upload-zone ${
           dragOver ? "is-drag" : ""
-        } ${busy ? "is-busy" : ""}`}
+        } ${busy ? "is-busy" : ""} ${
+          error ? "has-error" : ""
+        }`}
         onDragOver={(e) => {
           e.preventDefault();
+
           if (!busy) {
             setDragOver(true);
           }
@@ -60,27 +71,25 @@ export default function FileUpload({ onFile, busy, progress, error }) {
 
         {!busy ? (
           <>
-            <div className="upload-mark">＋</div>
+            <div className="upload-mark">{uploadMark}</div>
 
             <p className="upload-title">
               Drop a dataset here, or click to browse
             </p>
 
             <p className="upload-sub">
-              CSV, TSV, Parquet, or Excel — large files are
+              CSV, TSV, Parquet, or Excel � large files are
               streamed and profiled without loading fully into memory
             </p>
           </>
         ) : (
           <>
-            <div className="upload-mark">
-              {progress >= 100 ? "⚙" : "↑"}
-            </div>
+            <div className="upload-mark">{uploadMark}</div>
 
             <p className="upload-title">
               {progress >= 100
-                ? "Processing dataset…"
-                : "Uploading dataset…"}
+                ? "Processing dataset..."
+                : "Uploading dataset..."}
             </p>
 
             <div className="progress-track">
@@ -94,14 +103,22 @@ export default function FileUpload({ onFile, busy, progress, error }) {
 
             <p className="upload-sub">
               {progress >= 100
-                ? "Upload complete — analyzing your dataset…"
+                ? "Upload complete � analyzing your dataset..."
                 : `${progress}% uploaded`}
             </p>
           </>
         )}
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && (
+        <div className="upload-error" role="alert">
+          <span className="upload-error-icon">!</span>
+          <div>
+            <strong>Upload failed</strong>
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

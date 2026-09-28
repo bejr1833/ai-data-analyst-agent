@@ -3,7 +3,22 @@ import React from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function HistogramGrid({ histograms }) {
-  if (!histograms?.length) return null;
+  if (!histograms?.length) {
+    return (
+      <section className="panel">
+        <h2 className="panel-title">Numeric distributions</h2>
+        <div className="empty-state">
+          <div className="empty-state-icon">?</div>
+          <strong>No numeric columns</strong>
+          <p>
+            This dataset does not contain numeric fields suitable for
+            distribution analysis.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
       <h2 className="panel-title">Numeric distributions</h2>
@@ -33,4 +48,5 @@ export default function HistogramGrid({ histograms }) {
     </section>
   );
 }
+
 

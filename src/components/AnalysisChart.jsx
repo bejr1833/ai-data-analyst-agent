@@ -7,7 +7,7 @@ function formatNumber(value) {
 
   if (!Number.isFinite(number)) return String(value);
 
-  return number.toLocaleString("en-IN", {
+  return number.toLocaleString("en-US", {
     maximumFractionDigits: 2,
   });
 }
@@ -17,7 +17,7 @@ function formatCompact(value) {
 
   if (!Number.isFinite(number)) return String(value ?? "");
 
-  return number.toLocaleString("en-IN", {
+  return number.toLocaleString("en-US", {
     notation: "compact",
     maximumFractionDigits: 1,
   });
@@ -59,11 +59,23 @@ function axisTitle(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function chartTitle(visualization, x, y) {
-  return (
+function chartTitle(visualization, x, y, rowCount = null) {
+  let title =
     visualization?.title ||
-    `${axisTitle(y)} by ${axisTitle(x)}`
-  );
+    `${axisTitle(y)} by ${axisTitle(x)}`;
+
+  if (
+    Number.isInteger(rowCount) &&
+    rowCount > 0 &&
+    /^Top\\s+\\d+/i.test(title)
+  ) {
+    title = title.replace(
+      /^Top\\s+\\d+/i,
+      `Top ${rowCount}`
+    );
+  }
+
+  return title;
 }
 
 function Label({ x, y, children, anchor = "middle", fill = "#EAF2FA" }) {
@@ -183,14 +195,14 @@ function BarChart({ rows, x, y, visualization }) {
   const showEveryValue = data.length <= 15;
 
   return (
-    <ChartFrame title={chartTitle(visualization, x, y)}>
+    <ChartFrame title={chartTitle(visualization, x, y, data.length)}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
         height="480"
         preserveAspectRatio="none"
         role="img"
-        aria-label={chartTitle(visualization, x, y)}
+        aria-label={chartTitle(visualization, x, y, data.length)}
         style={{ display: "block", width: "100%", height: 480 }}
       >
         {ticks.map((tick, index) => {
@@ -378,11 +390,60 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
   const scaleMax = ticks.length ? ticks[ticks.length - 1] : maxValue;
   const range = scaleMax - scaleMin || 1;
 
-  const xPos = (index) =>
-    left +
-    (data.length === 1
-      ? chartWidth / 2
-      : (index / (data.length - 1)) * chartWidth);
+  // Forecast layout calculations MUST happen before xPos.
+  const forecastIndices = data
+    .map((item, index) =>
+      Number.isFinite(item.forecast) ? index : null
+    )
+    .filter((index) => index !== null);
+
+  const firstForecastIndex =
+    forecastIndices.length ? forecastIndices[0] : -1;
+
+  const forecastCount = forecastIndices.length;
+  const hasForecast = forecastCount > 0;
+
+  const FORECAST_WIDTH_RATIO = hasForecast ? 0.28 : 0;
+  const forecastWidth = chartWidth * FORECAST_WIDTH_RATIO;
+  const historicalWidth = chartWidth - forecastWidth;
+  const forecastStartX = left + historicalWidth;
+
+  const xPos = (index) => {
+    if (data.length === 1) {
+      return left + chartWidth / 2;
+    }
+
+    if (
+      hasForecast &&
+      forecastIndices.includes(index)
+    ) {
+      const forecastPosition =
+        index - firstForecastIndex;
+
+      return (
+        forecastStartX +
+        (forecastCount === 1
+          ? forecastWidth / 2
+          : (forecastPosition /
+              (forecastCount - 1)) *
+            forecastWidth)
+      );
+    }
+
+    const historicalCount =
+      firstForecastIndex > 0
+        ? firstForecastIndex
+        : data.length;
+
+    return (
+      left +
+      (historicalCount <= 1
+        ? historicalWidth / 2
+        : (index /
+            (historicalCount - 1)) *
+          historicalWidth)
+    );
+  };
 
   const yPos = (value) =>
     top + ((scaleMax - value) / range) * chartHeight;
@@ -401,14 +462,6 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
 
   const historicalPath = makePath("value");
   const forecastPath = makePath("forecast");
-  const forecastIndices = data
-    .map((item, index) =>
-      Number.isFinite(item.forecast) ? index : null
-    )
-    .filter((index) => index !== null);
-
-  const firstForecastIndex =
-    forecastIndices.length ? forecastIndices[0] : -1;
 
   // Keep labels readable instead of printing every historical date.
   const labelStep = Math.max(
@@ -424,14 +477,14 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
     forecastIndices.includes(index);
 
   return (
-    <ChartFrame title={chartTitle(visualization, x, y)}>
+    <ChartFrame title={chartTitle(visualization, x, y, data.length)}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
         height="470"
         preserveAspectRatio="none"
         role="img"
-        aria-label={chartTitle(visualization, x, y)}
+        aria-label={chartTitle(visualization, x, y, data.length)}
         style={{
           display: "block",
           width: "100%",
@@ -483,6 +536,30 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
           stroke="#8093AA"
           strokeWidth="1.2"
         />
+
+        {/* Dedicated forecast area */}
+        {hasForecast && firstForecastIndex > 0 && (
+          <>
+            <rect
+              x={forecastStartX}
+              y={top}
+              width={forecastWidth}
+              height={chartHeight}
+              fill="rgba(242,184,107,.045)"
+              rx="8"
+            />
+
+            <text
+              x={forecastStartX + 10}
+              y={top + 18}
+              fill="#F2B86B"
+              fontSize="11"
+              fontWeight="700"
+            >
+              Forecast
+            </text>
+          </>
+        )}
 
         {/* Historical series */}
         <polyline
@@ -545,14 +622,20 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
                     strokeWidth="1.5"
                   />
 
-                  {/* Forecast values remain visible even when history is long. */}
-                  <Label
-                    x={xPos(index)}
-                    y={yPos(item.forecast) - 15}
-                    fill="#FFF7EA"
-                  >
-                    {formatNumber(item.forecast)}
-                  </Label>
+                  {/* Keep forecast labels readable. */}
+                  {(index === firstForecastIndex ||
+                    index ===
+                      forecastIndices[
+                        forecastIndices.length - 1
+                      ]) && (
+                    <Label
+                      x={xPos(index)}
+                      y={yPos(item.forecast) - 15}
+                      fill="#FFF7EA"
+                    >
+                      {formatNumber(item.forecast)}
+                    </Label>
+                  )}
                 </g>
               ) : null
             )}
@@ -615,9 +698,9 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
             x2={xPos(firstForecastIndex)}
             y1={top}
             y2={height - bottom}
-            stroke="rgba(242,184,107,.30)"
+            stroke="rgba(242,184,107,.45)"
             strokeWidth="2"
-            strokeDasharray="5 5"
+            strokeDasharray="6 5"
           />
         )}
       </svg>
@@ -717,7 +800,7 @@ function ScatterChart({ rows, x, y, visualization }) {
 
   return (
     <ChartFrame
-      title={chartTitle(visualization, x, y)}
+      title={chartTitle(visualization, x, y, data.length)}
       footer={
         <span>
           Pearson correlation:{" "}
@@ -737,7 +820,7 @@ function ScatterChart({ rows, x, y, visualization }) {
         height="430"
         preserveAspectRatio="none"
         role="img"
-        aria-label={chartTitle(visualization, x, y)}
+        aria-label={chartTitle(visualization, x, y, data.length)}
         style={{ display: "block", width: "100%", height: 430 }}
       >
         {yTicks.map((tick, index) => {

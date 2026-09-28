@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { askDataset } from "../api/client.js";
 import AnalysisChart from "./AnalysisChart";
 import DataStory from "./DataStory";
@@ -122,7 +122,7 @@ function formatNumber(value) {
 
   if (!Number.isFinite(number)) return String(value);
 
-  return number.toLocaleString("en-IN");
+  return number.toLocaleString("en-US");
 }
 
 function isMetricVisualization(visualization) {
@@ -488,6 +488,53 @@ function makeFollowUps(message) {
   ];
 }
 
+function getFriendlyAnalysisError(error) {
+  const status = Number(error?.status);
+  const detail = String(
+    error?.detail ||
+    getFriendlyAnalysisError(error) ||
+    ""
+  ).trim();
+
+  if (
+    status === 404 ||
+    /dataset.*(not found|unavailable|expired)/i.test(detail)
+  ) {
+    return "This dataset is no longer available. Please upload the dataset again.";
+  }
+
+  if (
+    status === 413 ||
+    /too large|payload|size limit/i.test(detail)
+  ) {
+    return "This dataset is too large for the current upload limit. Please use a supported dataset size.";
+  }
+
+  if (
+    status === 429 ||
+    /rate limit|too many requests/i.test(detail)
+  ) {
+    return "The analysis service is temporarily busy. Please wait a moment and try again.";
+  }
+
+  if (status >= 500) {
+    return "The analysis service encountered a problem. Please try the question again.";
+  }
+
+  if (
+    /failed to fetch|networkerror|network request failed|fetch failed/i.test(
+      detail
+    )
+  ) {
+    return "The analysis service could not be reached. Please make sure the backend is running and try again.";
+  }
+
+  if (!detail) {
+    return "Unable to analyze the dataset. Please try again.";
+  }
+
+  return detail;
+}
 export default function AIAnalyst({ datasetId }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
@@ -600,9 +647,7 @@ export default function AIAnalyst({ datasetId }) {
         ...previous,
         {
           role: "error",
-          text:
-            error?.message ||
-            "Unable to analyze the dataset.",
+          text: getFriendlyAnalysisError(error),
         },
       ]);
     } finally {
@@ -924,4 +969,8 @@ export default function AIAnalyst({ datasetId }) {
     </section>
   );
 }
+
+
+
+
 

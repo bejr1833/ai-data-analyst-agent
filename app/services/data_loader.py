@@ -424,47 +424,158 @@ def _read_file(
 # LOAD DATASET
 # ============================================================
 
+# ============================================================
+# LOAD DATASET
+# ============================================================
+
 def load_dataset(
     filename,
     path,
 ):
 
-    df = _read_file(
-        filename,
-        path,
+    extension = os.path.splitext(
+        filename
+    )[1].lower()
+
+    dataset_id = str(
+        uuid.uuid4()
     )
 
     # --------------------------------------------------------
-    # DuckDB
+    # DuckDB connection
     # --------------------------------------------------------
 
     con = duckdb.connect(
         database=":memory:"
     )
 
-    con.register(
-        "uploaded_dataframe",
-        df,
-    )
+    # --------------------------------------------------------
+    # LARGE-DATASET PATH
+    #
+    # CSV / TSV / Parquet are loaded directly by DuckDB.
+    # This avoids creating a complete Pandas DataFrame first.
+    # --------------------------------------------------------
 
-    con.execute(
-        """
-        CREATE TABLE main_table AS
-        SELECT *
-        FROM uploaded_dataframe
-        """
-    )
+    if extension in {
+        ".csv",
+        ".tsv",
+    }:
+
+        separator = (
+            "\t"
+            if extension == ".tsv"
+            else ","
+        )
+
+        escaped_path = (
+            str(path)
+            .replace(
+                "'",
+                "''",
+            )
+        )
+
+        con.execute(
+            f"""
+            CREATE TABLE main_table AS
+            SELECT *
+            FROM read_csv_auto(
+                '{escaped_path}',
+                header = true,
+                delim = '{separator}'
+            )
+            """
+        )
+
+    elif extension == ".parquet":
+
+        escaped_path = (
+            str(path)
+            .replace(
+                "'",
+                "''",
+            )
+        )
+
+        con.execute(
+            f"""
+            CREATE TABLE main_table AS
+            SELECT *
+            FROM read_parquet(
+                '{escaped_path}'
+            )
+            """
+        )
+
+    # --------------------------------------------------------
+    # EXCEL PATH
+    #
+    # Excel continues using the existing Pandas cleaning
+    # pipeline because it contains custom header detection
+    # and workbook cleanup logic.
+    # --------------------------------------------------------
+
+    elif extension in {
+        ".xlsx",
+        ".xls",
+    }:
+
+        df = _read_excel_clean(
+            path
+        )
+
+        con.register(
+            "uploaded_dataframe",
+            df,
+        )
+
+        con.execute(
+            """
+            CREATE TABLE main_table AS
+            SELECT *
+            FROM uploaded_dataframe
+            """
+        )
+
+    else:
+
+        con.close()
+
+        raise ValueError(
+            f"Unsupported file type: {extension}"
+        )
+
+    # --------------------------------------------------------
+    # COLUMN INFORMATION
+    # --------------------------------------------------------
 
     columns = [
-        str(column)
-        for column in df.columns
+        row[0]
+        for row in con.execute(
+            """
+            SELECT
+                column_name
+            FROM information_schema.columns
+            WHERE table_name = 'main_table'
+            ORDER BY ordinal_position
+            """
+        ).fetchall()
     ]
 
-    row_count = len(df)
+    # --------------------------------------------------------
+    # ROW COUNT
+    # --------------------------------------------------------
 
-    dataset_id = str(
-        uuid.uuid4()
-    )
+    row_count = con.execute(
+        """
+        SELECT COUNT(*)
+        FROM main_table
+        """
+    ).fetchone()[0]
+
+    # --------------------------------------------------------
+    # DATASET OBJECT
+    # --------------------------------------------------------
 
     dataset = Dataset(
         dataset_id=dataset_id,
@@ -479,7 +590,6 @@ def load_dataset(
     ] = dataset
 
     return dataset
-
 
 # ============================================================
 # GET DATASET

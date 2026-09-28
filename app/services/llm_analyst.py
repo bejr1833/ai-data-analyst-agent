@@ -1336,10 +1336,30 @@ def _try_grouped_query(
     q = question.lower().strip()
 
     # --------------------------------------------------------
-    # Only handle questions containing "by"
+    # Detect comparison questions
     # --------------------------------------------------------
 
-    if " by " not in q:
+    comparison_mode = (
+        "compare" in q
+        and " between " in q
+        and " and " in q
+    )
+
+    comparison_values = []
+
+    if comparison_mode:
+        comparison_part = q.split(" between ", 1)[1]
+        comparison_part = comparison_part.split(" and ", 1)
+
+        if len(comparison_part) == 2:
+            comparison_values = [
+                comparison_part[0].strip(" .?!"),
+                comparison_part[1].strip(" .?!"),
+            ]
+
+    # Normal grouped questions require "by".
+    # Comparison questions use "between X and Y" instead.
+    if " by " not in q and not comparison_mode:
         return None
 
     # --------------------------------------------------------
@@ -1393,6 +1413,79 @@ def _try_grouped_query(
             if (
                 f"by {column_lower}" in q
                 or f"by {column_lower.replace('_', ' ')}" in q
+            ):
+                group_column = column
+                break
+
+    # --------------------------------------------------------
+    # Infer grouping column for comparison questions
+    # --------------------------------------------------------
+
+    if group_column is None and comparison_mode and len(comparison_values) == 2:
+
+        for column in columns:
+
+            identifier = (
+                '"'
+                + column.replace('"', '""')
+                + '"'
+            )
+
+            try:
+                distinct_rows = dataset.con.execute(
+                    f"""
+                    SELECT DISTINCT {identifier}
+                    FROM main_table
+                    WHERE {identifier} IS NOT NULL
+                    LIMIT 1000
+                    """
+                ).fetchall()
+            except Exception:
+                continue
+
+            distinct_values = {
+                str(row[0]).strip().lower()
+                for row in distinct_rows
+            }
+
+            if all(
+                value.lower() in distinct_values
+                for value in comparison_values
+            ):
+                group_column = column
+                break
+
+    # --------------------------------------------------------
+    # Detect grouping column from comparison values
+    # --------------------------------------------------------
+
+    if group_column is None and comparison_mode and len(comparison_values) == 2:
+
+        for column in columns:
+
+            try:
+                query = (
+                    'SELECT DISTINCT "'
+                    + column.replace('"', '""')
+                    + '" FROM main_table '
+                    + 'WHERE "'
+                    + column.replace('"', '""')
+                    + '" IS NOT NULL LIMIT 1000'
+                )
+
+                distinct_rows = dataset.con.execute(query).fetchall()
+
+            except Exception:
+                continue
+
+            distinct_values = {
+                str(row[0]).strip().lower()
+                for row in distinct_rows
+            }
+
+            if all(
+                value.lower() in distinct_values
+                for value in comparison_values
             ):
                 group_column = column
                 break
@@ -1538,6 +1631,29 @@ def _try_grouped_query(
     )
 
     # --------------------------------------------------------
+    # Build comparison filter
+    # --------------------------------------------------------
+
+    where_clause = ""
+
+    if comparison_mode and len(comparison_values) == 2:
+
+        escaped_values = [
+            value.replace("'", "''")
+            for value in comparison_values
+        ]
+
+        value_list = ", ".join(
+            f"'{value}'"
+            for value in escaped_values
+        )
+
+        where_clause = (
+            f"WHERE LOWER(CAST({group_identifier} AS VARCHAR)) "
+            f"IN ({value_list})"
+        )
+
+    # --------------------------------------------------------
     # Build SQL
     # --------------------------------------------------------
 
@@ -1548,6 +1664,7 @@ def _try_grouped_query(
             {group_identifier} AS "{group_column}",
             COUNT({metric_identifier}) AS "count"
         FROM main_table
+        {where_clause}
         GROUP BY {group_identifier}
         ORDER BY "count" DESC
         """
@@ -1564,6 +1681,7 @@ def _try_grouped_query(
                 )
             ) AS "{metric_column}"
         FROM main_table
+        {where_clause}
         GROUP BY {group_identifier}
         ORDER BY "{metric_column}" DESC
         """
@@ -1614,12 +1732,63 @@ def _try_grouped_query(
             f"{group_value}: {metric_value}"
         )
 
-    answer = (
-        f"The {operation_name} of "
-        f"{metric_column.replace('_', ' ')} "
-        f"by {group_column.replace('_', ' ')} is:\n"
-        + "\n".join(answer_lines)
-    )
+    # --------------------------------------------------------
+    # Comparison-specific answer
+    # --------------------------------------------------------
+
+    if comparison_mode and len(rows) == 2:
+
+        first_group = _display_value(rows[0][0])
+        first_value = float(rows[0][1])
+
+        second_group = _display_value(rows[1][0])
+        second_value = float(rows[1][1])
+
+        difference = abs(first_value - second_value)
+
+        if first_value > second_value:
+            higher_group = first_group
+        elif second_value > first_value:
+            higher_group = second_group
+        else:
+            higher_group = None
+
+        readable_metric = metric_column.replace("_", " ")
+
+        if higher_group is None:
+            comparison_summary = (
+                f"Both {first_group} and {second_group} "
+                f"have the same {readable_metric}."
+            )
+        else:
+            lower_group = (
+                second_group
+                if higher_group == first_group
+                else first_group
+            )
+
+            comparison_summary = (
+                f"{higher_group} generated "
+                f"{difference:,.0f} more {readable_metric} "
+                f"than {lower_group}."
+            )
+
+        answer = (
+            f"{readable_metric.title()} comparison between "
+            f"{first_group} and {second_group}:\n"
+            + "\n".join(answer_lines)
+            + "\n\n"
+            + comparison_summary
+        )
+
+    else:
+
+        answer = (
+            f"The {operation_name} of "
+            f"{metric_column.replace('_', ' ')} "
+            f"by {group_column.replace('_', ' ')} is:\n"
+            + "\n".join(answer_lines)
+        )
 
     # --------------------------------------------------------
     # Visualization
@@ -1635,6 +1804,16 @@ def _try_grouped_query(
         ),
         rows=rows,
     )
+
+    # Use a comparison-specific chart title when comparing
+    # exactly two groups.
+    if comparison_mode and len(comparison_values) == 2:
+
+        visualization["title"] = (
+            f"{metric_column.replace('_', ' ').title()} Comparison: "
+            f"{comparison_values[0].title()} vs "
+            f"{comparison_values[1].title()}"
+        )
 
     # --------------------------------------------------------
     # Return result
@@ -1654,6 +1833,128 @@ def _try_grouped_query(
         "model": "local",
         "visualization": visualization,
     }
+
+def _try_percentage_query(
+    dataset,
+    question: str,
+) -> dict | None:
+    """
+    Handle common percentage/rate questions locally with DuckDB.
+
+    This avoids sending deterministic percentage calculations to Gemini.
+    Currently supports questions such as:
+      - What percentage of units were returned?
+      - What percent of units were returned?
+      - What is the return rate?
+    """
+    q = question.lower().strip()
+
+    percentage_intent = (
+        "percentage" in q
+        or "percent" in q
+        or "return rate" in q
+    )
+
+    if not percentage_intent:
+        return None
+
+    columns = list(getattr(dataset, "columns", []) or [])
+    lower_columns = {str(col).lower(): col for col in columns}
+
+    numerator = None
+    denominator = None
+
+    # Returned units / total units.
+    if (
+        ("returned" in q or "return" in q)
+        and ("unit" in q or "units" in q)
+    ):
+        numerator = (
+            lower_columns.get("returns")
+            or lower_columns.get("returned")
+        )
+        denominator = (
+            lower_columns.get("units_sold")
+            or lower_columns.get("units")
+            or lower_columns.get("total_units")
+        )
+
+    # Explicit return-rate wording.
+    if numerator is None and "return rate" in q:
+        numerator = (
+            lower_columns.get("returns")
+            or lower_columns.get("returned")
+        )
+        denominator = (
+            lower_columns.get("units_sold")
+            or lower_columns.get("units")
+            or lower_columns.get("total_units")
+        )
+
+    if numerator is None or denominator is None:
+        return None
+
+    def quote_identifier(name):
+        return '"' + str(name).replace('"', '""') + '"'
+
+    numerator_sql = quote_identifier(numerator)
+    denominator_sql = quote_identifier(denominator)
+
+    sql = f"""
+        SELECT
+            (
+                SUM(TRY_CAST({numerator_sql} AS DOUBLE))
+                * 100.0
+            ) / NULLIF(
+                SUM(TRY_CAST({denominator_sql} AS DOUBLE)),
+                0
+            ) AS percentage
+        FROM main_table
+    """
+
+    started = time.perf_counter()
+
+    try:
+        row = dataset.con.execute(sql).fetchone()
+    except Exception as exc:
+        print("Percentage query failed:", repr(exc))
+        return None
+
+    duration_ms = round(
+        (time.perf_counter() - started) * 1000,
+        2,
+    )
+
+    if not row or row[0] is None:
+        return None
+
+    percentage = float(row[0])
+
+    answer = (
+        f"{percentage:.2f}% of units were returned."
+    )
+
+    return {
+        "question": question,
+        "type": "percentage_analysis",
+        "answer": answer,
+        "sql": sql.strip(),
+        "columns": ["percentage"],
+        "rows": [
+            {
+                "percentage": percentage,
+            }
+        ],
+        "row_count": 1,
+        "model": "local",
+        "visualization": {
+            "type": "metric",
+            "y": "percentage",
+            "title": "Percentage of Units Returned",
+        },
+        "duration_ms": duration_ms,
+    }
+
 
 def _try_numeric_query(
     dataset,
@@ -1744,41 +2045,44 @@ def _try_numeric_query(
     # --------------------------------------------------------
 
     column_aliases = {
+        "marketing spending": "marketing_spend",
+        "marketing spend": "marketing_spend",
+        "marketing cost": "marketing_spend",
+        "marketing": "marketing_spend",
+
+        "customer rating": "customer_rating",
+        "rating": "customer_rating",
+
+        "unit price": "unit_price",
+        "price per unit": "unit_price",
+        "unit_price": "unit_price",
+        "price": "unit_price",
+
+        "units sold": "units_sold",
+        "units_sold": "units_sold",
+        "quantity": "units_sold",
+        "qty": "units_sold",
+        "units": "units_sold",
+
+        "revenue": "revenue",
         "sales": "revenue",
         "sale": "revenue",
         "income": "revenue",
         "earnings": "revenue",
 
-        "units": "units_sold",
-        "unit": "units_sold",
-
-        "price": "unit_price",
-
-        "marketing": "marketing_spend",
-        "marketing cost": "marketing_spend",
-        "marketing spending": "marketing_spend",
-
-        "rating": "customer_rating",
-
         "returns": "returns",
         "return": "returns",
     }
 
-    # --------------------------------------------------------
-    # Try business alias first
-    # --------------------------------------------------------
-
-    for alias, actual_column in column_aliases.items():
-
+    # Match longer, more specific phrases before shorter aliases.
+    for alias, actual_column in sorted(
+        column_aliases.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
         if alias in q:
-
             for column_name, data_type in schema_rows:
-
-                if (
-                    column_name.lower()
-                    == actual_column.lower()
-                ):
-
+                if column_name.lower() == actual_column.lower():
                     selected_column = column_name
                     break
 
@@ -2226,14 +2530,12 @@ def _try_main_insight_query(
     question: str,
 ) -> dict | None:
     """
-    Answer generic questions such as:
-        What is the main insight?
-        What's the key insight?
-        Give me an insight.
+    Generate a compact set of dataset-level business insights locally.
 
-    This deliberately analyzes the dataset itself rather than explaining the
-    previous conversational result.
+    The calculations are performed by DuckDB so large datasets do not need
+    to be sent to Gemini.
     """
+
     q = question.lower().strip()
 
     insight_phrases = [
@@ -2262,121 +2564,231 @@ def _try_main_insight_query(
         ).fetchall()
 
         columns = [row[0] for row in schema_rows]
+
         if not columns:
             return None
 
-        # Prefer revenue/sales, then other business metrics.
-        metric_candidates = [
-            "revenue",
-            "sales",
-            "units_sold",
-            "marketing_spend",
-            "customer_rating",
-            "returns",
-        ]
+        insights = []
+        result_rows = []
 
-        metric_column = next(
-            (column for column in metric_candidates if column in columns),
-            None,
-        )
+        # --------------------------------------------------------
+        # Revenue insights
+        # --------------------------------------------------------
 
-        if metric_column is None:
-            return None
-
-        # Prefer a categorical business dimension.
-        group_candidates = [
-            "region",
-            "product",
-        ]
-
-        group_column = next(
-            (column for column in group_candidates if column in columns),
-            None,
-        )
-
-        if group_column is None:
-            # Find the first non-numeric-looking dimension.
-            for column, data_type in schema_rows:
-                dtype = str(data_type).upper()
-                if (
-                    column != metric_column
-                    and (
-                        "CHAR" in dtype
-                        or "TEXT" in dtype
-                        or "VARCHAR" in dtype
-                    )
-                ):
-                    group_column = column
-                    break
-
-        if group_column is None:
-            return None
-
-        group_id = '"' + group_column.replace('"', '""') + '"'
-        metric_id = '"' + metric_column.replace('"', '""') + '"'
-
-        sql = f"""
-        SELECT
-            {group_id} AS "{group_column}",
-            SUM(
-                TRY_CAST(
-                    {metric_id} AS DOUBLE
-                )
-            ) AS "{metric_column}"
-        FROM main_table
-        GROUP BY {group_id}
-        ORDER BY "{metric_column}" DESC
-        """
-
-        result_columns, rows = _execute_sql(dataset, sql)
-
-        if not rows:
-            return None
-
-        top_group = _display_value(rows[0][0])
-        top_value = float(rows[0][1])
-
-        total = sum(
-            float(row[1])
-            for row in rows
-            if row[1] is not None
-        )
-
-        share = (top_value / total * 100) if total else 0.0
-        readable_metric = metric_column.replace("_", " ")
-
-        answer = (
-            f"The main insight is that {top_group} has the highest "
-            f"total {readable_metric}, at {top_value:,.0f}. "
-            f"It accounts for approximately {share:.1f}% of the "
-            f"total {readable_metric} across the dataset."
-        )
-
-        visualization = {
-            "type": "bar",
-            "x": group_column,
-            "y": metric_column,
-            "title": (
-                f"{readable_metric.title()} by "
-                f"{group_column.replace('_', ' ').title()}"
+        revenue_column = next(
+            (
+                column
+                for column in ["revenue", "sales"]
+                if column in columns
             ),
-        }
+            None,
+        )
+
+        if revenue_column:
+
+            revenue_id = (
+                '"'
+                + revenue_column.replace('"', '""')
+                + '"'
+            )
+
+            total_sql = f"""
+            SELECT
+                SUM(
+                    TRY_CAST(
+                        {revenue_id} AS DOUBLE
+                    )
+                ) AS total_revenue
+            FROM main_table
+            """
+
+            total_row = dataset.con.execute(
+                total_sql
+            ).fetchone()
+
+            total_revenue = (
+                float(total_row[0])
+                if total_row and total_row[0] is not None
+                else 0.0
+            )
+
+            # Prefer region, then product.
+            for group_column in ["region", "product"]:
+
+                if group_column not in columns:
+                    continue
+
+                group_id = (
+                    '"'
+                    + group_column.replace('"', '""')
+                    + '"'
+                )
+
+                sql = f"""
+                SELECT
+                    {group_id} AS "{group_column}",
+                    SUM(
+                        TRY_CAST(
+                            {revenue_id} AS DOUBLE
+                        )
+                    ) AS revenue
+                FROM main_table
+                WHERE {group_id} IS NOT NULL
+                GROUP BY {group_id}
+                ORDER BY revenue DESC
+                """
+
+                rows = dataset.con.execute(sql).fetchall()
+
+                if not rows:
+                    continue
+
+                top_group = _display_value(rows[0][0])
+                top_value = float(rows[0][1])
+
+                share = (
+                    top_value / total_revenue * 100
+                    if total_revenue
+                    else 0.0
+                )
+
+                label = group_column.replace("_", " ")
+
+                insights.append(
+                    f"{top_group} has the highest total "
+                    f"{revenue_column.replace('_', ' ')} among "
+                    f"{label}s, at {top_value:,.0f} "
+                    f"({share:.1f}% of total revenue)."
+                )
+
+                result_rows.extend(
+                    [
+                        {
+                            "insight_type": f"top_{group_column}",
+                            "dimension": top_group,
+                            "value": top_value,
+                        }
+                    ]
+                )
+
+        # --------------------------------------------------------
+        # Return-rate insight
+        # --------------------------------------------------------
+
+        returns_column = next(
+            (
+                column
+                for column in ["returns", "returned"]
+                if column in columns
+            ),
+            None,
+        )
+
+        units_column = next(
+            (
+                column
+                for column in [
+                    "units_sold",
+                    "units",
+                    "total_units",
+                ]
+                if column in columns
+            ),
+            None,
+        )
+
+        if returns_column and units_column:
+
+            returns_id = (
+                '"'
+                + returns_column.replace('"', '""')
+                + '"'
+            )
+
+            units_id = (
+                '"'
+                + units_column.replace('"', '""')
+                + '"'
+            )
+
+            return_sql = f"""
+            SELECT
+                (
+                    SUM(
+                        TRY_CAST(
+                            {returns_id} AS DOUBLE
+                        )
+                    ) * 100.0
+                ) / NULLIF(
+                    SUM(
+                        TRY_CAST(
+                            {units_id} AS DOUBLE
+                        )
+                    ),
+                    0
+                ) AS return_percentage
+            FROM main_table
+            """
+
+            return_row = dataset.con.execute(
+                return_sql
+            ).fetchone()
+
+            if return_row and return_row[0] is not None:
+
+                return_percentage = float(return_row[0])
+
+                insights.append(
+                    f"Approximately {return_percentage:.2f}% "
+                    f"of units were returned."
+                )
+
+                result_rows.append(
+                    {
+                        "insight_type": "return_rate",
+                        "dimension": "returned units",
+                        "value": return_percentage,
+                    }
+                )
+
+        # --------------------------------------------------------
+        # Final result
+        # --------------------------------------------------------
+
+        if not insights:
+            return None
+
+        answer = "Main insights from the dataset:\n\n" + "\n".join(
+            f"• {insight}"
+            for insight in insights
+        )
 
         return {
             "question": question,
             "type": "business_insight",
             "answer": answer,
-            "sql": sql.strip(),
-            "columns": result_columns,
-            "rows": _serialize_rows(result_columns, rows),
-            "row_count": len(rows),
+            "sql": None,
+            "columns": [
+                "insight_type",
+                "dimension",
+                "value",
+            ],
+            "rows": result_rows,
+            "row_count": len(result_rows),
             "model": "local",
-            "visualization": visualization,
+            "visualization": {
+                "type": "table",
+                "title": "Main Dataset Insights",
+            },
         }
 
     except Exception as exc:
-        print("Main insight query failed:", repr(exc))
+        print(
+            "Main insight query failed:",
+            repr(exc),
+        )
         return None
+
 
 def _normalize_conversation_history(conversation_history: list[dict] | None) -> list[dict]:
     """Normalize chat history from text/content/answer based clients."""
@@ -3928,12 +4340,17 @@ LIMIT 1000
                 f"{col2} is {correlation:.4f}."
             ),
             "sql": correlation_sql,
-            "columns": chart_columns,
-            "rows": _serialize_rows(
+            "columns": ["correlation"],
+            "rows": [
+                {
+                    "correlation": correlation
+                }
+            ],
+            "chart_rows": _serialize_rows(
                 chart_columns,
                 chart_rows,
             ),
-            "row_count": len(chart_rows),
+            "row_count": 1,
             "model": "local",
             "visualization": {
                 "type": "scatter",
@@ -4833,3 +5250,4 @@ def _try_anomaly_query(dataset, question):
         )
 
         return None
+

@@ -3,7 +3,22 @@ import React from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function CategoricalGrid({ charts }) {
-  if (!charts?.length) return null;
+  if (!charts?.length) {
+    return (
+      <section className="panel">
+        <h2 className="panel-title">Categorical breakdowns</h2>
+        <div className="empty-state">
+          <div className="empty-state-icon">#</div>
+          <strong>No categorical columns</strong>
+          <p>
+            This dataset does not contain categorical fields suitable for
+            category breakdown analysis.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
       <h2 className="panel-title">Categorical breakdowns</h2>
@@ -35,4 +50,5 @@ export default function CategoricalGrid({ charts }) {
     </section>
   );
 }
+
 

@@ -49,6 +49,9 @@ class AnalystAgent:
             ),
             "grouped_analysis": getattr(llm_analyst, "_try_grouped_query", None),
             "numeric_analysis": getattr(llm_analyst, "_try_numeric_query", None),
+            "percentage_analysis": getattr(
+                llm_analyst, "_try_percentage_query", None
+            ),
             "anomaly_detection": getattr(
                 llm_analyst, "_try_anomaly_query", None
             ),
@@ -184,7 +187,20 @@ class AnalystAgent:
         if self._contains_any(
             q,
             [
-                "highest", "lowest", "top", "best", "worst",
+                "percentage",
+                "percent",
+                "return rate",
+            ],
+        ):
+            return [AgentStep(
+                "percentage_analysis",
+                "Calculate a percentage or rate locally",
+            )]
+
+        if self._contains_any(
+            q,
+            [
+                "highest", "lowest", "top", "best", "worst", "most", "least",
                 "maximum", "minimum", "leading", "largest", "smallest",
             ],
         ):
@@ -195,6 +211,11 @@ class AnalystAgent:
 
         if (
             " by " in q
+            or (
+                "compare" in q
+                and " between " in q
+                and " and " in q
+            )
             or self._contains_any(
                 q,
                 [
@@ -784,30 +805,73 @@ class AnalystAgent:
 
     def _metric_column(self, question: str) -> str | None:
         columns = [str(c) for c in getattr(self.dataset, "columns", [])]
-        q = question.lower()
+        q = question.lower().strip()
 
         aliases = {
             "revenue": [
-                "revenue", "sales", "sale", "income", "earnings",
+                "total revenue",
+                "revenue",
+                "total sales",
+                "sales",
+                "sale",
+                "income",
+                "earnings",
             ],
             "units_sold": [
-                "units sold", "units", "quantity", "qty",
+                "units sold",
+                "units_sold",
+                "quantity",
+                "qty",
+                "units",
             ],
-            "unit_price": ["unit price", "price"],
-            "marketing_spend": ["marketing spend", "marketing"],
-            "customer_rating": ["rating", "customer rating"],
-            "returns": ["returns", "return"],
+            "unit_price": [
+                "unit price",
+                "unit_price",
+                "average price",
+                "price per unit",
+                "price",
+            ],
+            "marketing_spend": [
+                "marketing spend",
+                "marketing_spend",
+                "marketing",
+            ],
+            "customer_rating": [
+                "customer rating",
+                "customer_rating",
+                "rating",
+            ],
+            "returns": [
+                "returns",
+                "return",
+            ],
         }
 
-        for column in columns:
-            if column.lower() in q:
+        # 1. Exact dataset column names first.
+        # Sort by length so more specific names win.
+        for column in sorted(columns, key=len, reverse=True):
+            column_lower = column.lower()
+            if column_lower in q:
                 return column
 
-        for canonical, names in aliases.items():
-            for name in names:
-                if name in q and canonical in columns:
-                    return canonical
+        # 2. Match the longest alias first.
+        # This prevents generic words such as "price" or "units"
+        # from overriding more specific phrases.
+        alias_matches = []
 
+        for canonical, names in aliases.items():
+            if canonical not in columns:
+                continue
+
+            for name in names:
+                if name in q:
+                    alias_matches.append((len(name), canonical))
+
+        if alias_matches:
+            alias_matches.sort(reverse=True)
+            return alias_matches[0][1]
 
         return None
+
+
 

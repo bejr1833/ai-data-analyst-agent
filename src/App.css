@@ -2402,3 +2402,98 @@ main {
     font-size: 19px;
   }
 }
+
+/* ============================================================
+   UPLOAD ERROR STATE
+   ============================================================ */
+
+.upload-zone.has-error {
+  border-color: var(--orange-dark);
+  background: #fff7f2;
+}
+
+.upload-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e6c8bb;
+  border-radius: 8px;
+  background: #fff7f2;
+  color: var(--ink);
+  text-align: left;
+}
+
+.upload-error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--orange-dark);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.upload-error strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.upload-error p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   EMPTY STATES
+   ============================================================ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  padding: 28px 20px;
+  border: 1px dashed #cfd6d0;
+  border-radius: 10px;
+  background: #fafcf9;
+  text-align: center;
+}
+
+.empty-state-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: #eef2ee;
+  color: var(--ink-soft);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.empty-state strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.empty-state p {
+  max-width: 420px;
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
