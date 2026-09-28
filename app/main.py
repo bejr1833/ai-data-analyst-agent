@@ -1,4 +1,4 @@
-import os
+﻿import os
 import tempfile
 
 from contextlib import contextmanager
@@ -51,7 +51,7 @@ def root():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",") if origin.strip()],
+    allow_origins=["http://localhost:5173", "https://ai-data-analyst-agent-3eb0zixx2-insight-forge-ai.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -197,7 +197,7 @@ def _get_dataset_or_404(
             404,
             (
                 "Dataset not found. "
-                "It may have expired — "
+                "It may have expired â€” "
                 "please re-upload."
             ),
         )
@@ -447,6 +447,7 @@ def download_report(
             )
         }
     )
+
 
 
 
