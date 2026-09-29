@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    GLOBAL VARIABLES
    ============================================================ */
 
@@ -791,7 +791,7 @@ button {
 
 
 /* ============================================================
-   AI DATA ANALYST — FINAL DARK DASHBOARD OVERRIDES
+   AI DATA ANALYST â€” FINAL DARK DASHBOARD OVERRIDES
    This section intentionally comes last so App.css cannot
    reintroduce the old cream/white dashboard theme.
    ============================================================ */
@@ -933,7 +933,7 @@ main {
 }
 
 /* ============================================================
-   METRICS — fixes the cream/yellow strip visible in screenshot
+   METRICS â€” fixes the cream/yellow strip visible in screenshot
    ============================================================ */
 
 .metrics-grid {
@@ -967,7 +967,7 @@ main {
 }
 
 /* ============================================================
-   CHART CARDS — removes old white/cream backgrounds
+   CHART CARDS â€” removes old white/cream backgrounds
    ============================================================ */
 
 .chart-grid {
@@ -1160,7 +1160,7 @@ main {
 
 
 /* ============================================================
-   ANALYSIS CHART — COMPACT, CLEAN RESULT CARD
+   ANALYSIS CHART â€” COMPACT, CLEAN RESULT CARD
    ============================================================ */
 
 .analysis-chart {
@@ -1307,7 +1307,7 @@ main {
 }
 
 /* ============================================================
-   FINAL UI POLISH — AI ANALYST
+   FINAL UI POLISH â€” AI ANALYST
    1. Taller chart
    2. Premium suggestion cards
    3. Stronger query/input area
@@ -1828,7 +1828,7 @@ main {
 }
 
 /* ============================================================
-   AI ANALYST — FINAL INTERACTION AREA
+   AI ANALYST â€” FINAL INTERACTION AREA
    Make the query composer the primary visual focus.
    ============================================================ */
 
@@ -1859,7 +1859,7 @@ main {
 
 .ai-analyst-form::before,
 .ai-analyst-input::before {
-  content: "✦" !important;
+  content: "+" !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -1941,7 +1941,7 @@ main {
 
 .ai-analyst-form button::after,
 .ai-analyst-input button::after {
-  content: "→";
+  content: ">" !important;
   font-size: 15px;
   line-height: 1;
 }
@@ -1985,7 +1985,7 @@ main {
 
 .ai-analyst-suggestions::before,
 .ai-suggestions::before {
-  content: "SUGGESTED ANALYSIS" !important;
+  content: "+" !important;
   position: absolute !important;
   top: 0 !important;
   left: 2px !important;
@@ -2068,7 +2068,7 @@ main {
 }
 
 /* ============================================================
-   AI ANALYST — FINAL ANSWER CARD
+   AI ANALYST â€” FINAL ANSWER CARD
    Make the analytical result the primary visual output.
    ============================================================ */
 
@@ -2094,7 +2094,7 @@ main {
 
 .ai-message-assistant::before,
 .chat-message.assistant::before {
-  content: "✦" !important;
+  content: "+" !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -2175,7 +2175,7 @@ main {
 }
 
 /* ============================================================
-   AI ANALYST — PRODUCT FEATURES
+   AI ANALYST â€” PRODUCT FEATURES
    Persistence, export, follow-ups, copy, loading state.
    ============================================================ */
 
@@ -2316,7 +2316,7 @@ main {
 }
 
 /* ============================================================
-   FINAL ANALYST LAYOUT — ANSWER FIRST, DATASET SECOND
+   FINAL ANALYST LAYOUT â€” ANSWER FIRST, DATASET SECOND
    ============================================================ */
 
 .dashboard-ai-section {
@@ -2496,4 +2496,982 @@ main {
   color: var(--ink-soft);
   font-size: 12px;
   line-height: 1.55;
+}
+/* ============================================================
+   CORRELATION MAP
+   ============================================================ */
+
+.correlation-map-wrapper {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 28px;
+  padding: 28px;
+  background: linear-gradient(
+    145deg,
+    rgba(15, 23, 42, 0.98),
+    rgba(17, 24, 39, 0.98)
+  );
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.correlation-map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.correlation-map-header h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.correlation-map-header p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.correlation-map-status {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.correlation-map-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+}
+
+.correlation-grid {
+  display: grid;
+  gap: 5px;
+  min-width: 900px;
+}
+
+.correlation-corner {
+  min-height: 48px;
+}
+
+.correlation-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  box-sizing: border-box;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+  word-break: break-word;
+}
+
+.correlation-row-label {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.65);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.correlation-cell {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+.correlation-cell:hover {
+  transform: scale(1.04);
+  filter: brightness(1.12);
+  z-index: 2;
+}
+
+.correlation-empty {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.5);
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.correlation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  margin-top: 20px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.correlation-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.correlation-legend i {
+  width: 11px;
+  height: 11px;
+  display: inline-block;
+  border-radius: 3px;
+}
+
+.correlation-positive {
+  background: rgba(59, 130, 246, 0.85);
+}
+
+.correlation-negative {
+  background: rgba(239, 68, 68, 0.85);
+}
+
+@media (max-width: 700px) {
+  .correlation-map-wrapper {
+    padding: 18px;
+  }
+
+  .correlation-map-header {
+    align-items: flex-start;
+  }
+
+  .correlation-map-header h2 {
+    font-size: 19px;
+  }
+}
+
+/* ============================================================
+   CORRELATION MATRIX — ENHANCED UI
+   ============================================================ */
+
+.correlation-map-eyebrow {
+  margin-bottom: 7px;
+  color: #60a5fa;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.correlation-cell-strong {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 14px rgba(96, 165, 250, 0.08);
+}
+
+.correlation-interpretation {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.48);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.correlation-interpretation-title {
+  margin-bottom: 6px;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.correlation-interpretation-text {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.correlation-interpretation-text strong {
+  color: #e2e8f0;
+  font-weight: 800;
+}
+
+.correlation-empty {
+  padding: 28px;
+  flex-direction: column;
+  text-align: center;
+  gap: 6px;
+}
+
+.correlation-empty-title {
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.correlation-empty-text {
+  max-width: 520px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 768px) {
+  .correlation-map-wrapper {
+    padding: 20px;
+  }
+
+  .correlation-map-header {
+    align-items: flex-start;
+  }
+
+  .correlation-map-header h2 {
+    font-size: 19px;
+  }
+
+  .correlation-grid {
+    min-width: 760px;
+  }
+}
+
+
+/* ============================================================
+   AI ANALYST — PREMIUM ANSWER PRESENTATION
+   ============================================================ */
+
+.ai-message-assistant,
+.chat-message.assistant {
+  padding: 20px 22px !important;
+  margin-bottom: 18px !important;
+  border: 1px solid rgba(105, 183, 202, 0.24) !important;
+  border-left: 3px solid rgba(105, 183, 202, 0.78) !important;
+  border-radius: 18px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(31, 49, 72, 0.98),
+      rgba(20, 34, 51, 0.98)
+    ) !important;
+  box-shadow:
+    0 14px 34px rgba(5, 12, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+
+/* Main response text */
+.ai-message-assistant .ai-message-text,
+.ai-message-assistant .chat-message-text,
+.chat-message.assistant .ai-message-text,
+.chat-message.assistant .chat-message-text {
+  color: #edf5f8 !important;
+  font-size: 14px !important;
+  line-height: 1.72 !important;
+  font-weight: 500 !important;
+}
+
+/* Primary analytical answer */
+.ai-message-assistant .answer,
+.ai-message-assistant .answer-text,
+.ai-message-assistant .ai-answer,
+.chat-message.assistant .answer,
+.chat-message.assistant .answer-text,
+.chat-message.assistant .ai-answer {
+  display: block !important;
+  margin-top: 8px !important;
+  color: #f4fafc !important;
+  font-size: 16px !important;
+  line-height: 1.7 !important;
+  font-weight: 650 !important;
+}
+
+/* Numbers inside analytical answers */
+.ai-message-assistant strong,
+.chat-message.assistant strong {
+  color: #ffffff !important;
+  font-weight: 800 !important;
+}
+
+/* Charts get their own visual separation */
+.ai-message-assistant .analysis-chart,
+.chat-message.assistant .analysis-chart,
+.ai-message-assistant .correlation-map-wrapper,
+.chat-message.assistant .correlation-map-wrapper {
+  margin-top: 18px !important;
+}
+
+/* Agent trace / SQL become supporting evidence */
+.ai-message-assistant .agent-trace,
+.ai-message-assistant .agent-execution-trace,
+.ai-message-assistant .sql-block,
+.ai-message-assistant .sql-section,
+.chat-message.assistant .agent-trace,
+.chat-message.assistant .agent-execution-trace,
+.chat-message.assistant .sql-block,
+.chat-message.assistant .sql-section {
+  margin-top: 14px !important;
+  border: 1px solid rgba(159, 181, 211, 0.13) !important;
+  border-radius: 12px !important;
+  background: rgba(12, 23, 37, 0.58) !important;
+}
+
+/* Follow-up questions */
+.ai-followups {
+  margin-top: 18px !important;
+  padding-top: 14px !important;
+  border-top: 1px solid rgba(159, 181, 211, 0.12) !important;
+}
+
+.ai-followups > span {
+  color: #8fa8bb !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.1em !important;
+}
+
+.ai-followups button {
+  border: 1px solid rgba(105, 183, 202, 0.20) !important;
+  border-radius: 10px !important;
+  background: rgba(105, 183, 202, 0.065) !important;
+  color: #b9dfe7 !important;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease !important;
+}
+
+.ai-followups button:hover {
+  transform: translateY(-1px) !important;
+  border-color: rgba(105, 183, 202, 0.42) !important;
+  background: rgba(105, 183, 202, 0.11) !important;
+}
+
+/* User question */
+.ai-message-user,
+.chat-message.user {
+  margin-bottom: 12px !important;
+  border-radius: 14px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(42, 57, 76, 0.86),
+      rgba(31, 45, 63, 0.86)
+    ) !important;
+}
+
+/* Mobile */
+@media (max-width: 680px) {
+  .ai-message-assistant,
+  .chat-message.assistant {
+    padding: 16px !important;
+    border-radius: 15px !important;
+  }
+
+  .ai-message-assistant .answer,
+  .ai-message-assistant .answer-text,
+  .ai-message-assistant .ai-answer,
+  .chat-message.assistant .answer,
+  .chat-message.assistant .answer-text,
+  .chat-message.assistant .ai-answer {
+    font-size: 15px !important;
+  }
+}
+
+
+/* ============================================================
+   AI ANALYST — PREMIUM LOADING STATE
+   ============================================================ */
+
+.ai-analysis-loading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 14px 0 18px;
+  padding: 18px 20px;
+  border: 1px solid rgba(105, 183, 202, 0.18);
+  border-left: 3px solid rgba(105, 183, 202, 0.62);
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(25, 42, 62, 0.96),
+      rgba(14, 28, 44, 0.96)
+    );
+  box-shadow:
+    0 12px 28px rgba(5, 12, 22, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.ai-analysis-loading-orb {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at center,
+      rgba(105, 183, 202, 0.22) 0 32%,
+      rgba(105, 183, 202, 0.06) 33% 58%,
+      transparent 59%
+    );
+}
+
+.ai-analysis-loading-orb::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(105, 183, 202, 0.42);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: analystSpin 1.15s linear infinite;
+}
+
+.ai-analysis-loading-orb span {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #66d9e8;
+  box-shadow: 0 0 10px rgba(102, 217, 232, 0.65);
+  animation: analystPulse 1.2s ease-in-out infinite;
+}
+
+.ai-analysis-loading-orb span:nth-child(1) {
+  top: 5px;
+  left: 18px;
+}
+
+.ai-analysis-loading-orb span:nth-child(2) {
+  right: 5px;
+  bottom: 9px;
+  animation-delay: 0.2s;
+}
+
+.ai-analysis-loading-orb span:nth-child(3) {
+  left: 5px;
+  bottom: 9px;
+  animation-delay: 0.4s;
+}
+
+.ai-analysis-loading-content {
+  min-width: 0;
+}
+
+.ai-analysis-loading-title {
+  color: #edf5f8;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.ai-analysis-loading-subtitle {
+  margin-top: 4px;
+  color: #8fa8bb;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-analysis-loading-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.ai-analysis-loading-steps span {
+  padding: 4px 8px;
+  border: 1px solid rgba(105, 183, 202, 0.13);
+  border-radius: 999px;
+  background: rgba(105, 183, 202, 0.055);
+  color: #87a9b8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: analystStepPulse 1.8s ease-in-out infinite;
+}
+
+.ai-analysis-loading-steps span:nth-child(2) {
+  animation-delay: 0.25s;
+}
+
+.ai-analysis-loading-steps span:nth-child(3) {
+  animation-delay: 0.5s;
+}
+
+@keyframes analystSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes analystPulse {
+  0%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes analystStepPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+    border-color: rgba(105, 183, 202, 0.28);
+    color: #b8dbe3;
+  }
+}
+
+@media (max-width: 680px) {
+  .ai-analysis-loading {
+    padding: 15px;
+    gap: 12px;
+  }
+
+  .ai-analysis-loading-orb {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .ai-analysis-loading-steps {
+    gap: 5px;
+  }
+
+  .ai-analysis-loading-steps span {
+    font-size: 8px;
+  }
+}
+
+/* ============================================================
+   AI ANALYST — PROFESSIONAL RESULT WORKSPACE
+   ============================================================ */
+
+/* Assistant result content */
+.ai-analyst-chat .chat-message.assistant {
+  position: relative;
+  overflow: visible !important;
+}
+
+/* Answer action row */
+.ai-analyst-chat .assistant-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.ai-analyst-chat .assistant-message-actions button {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(148, 163, 184, 0.045);
+  color: #8fa8bb;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.ai-analyst-chat .assistant-message-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(105, 183, 202, 0.34);
+  background: rgba(105, 183, 202, 0.08);
+  color: #b9dfe7;
+}
+
+/* Visualization area */
+.ai-analyst-chat .analysis-chart {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 18px;
+  padding: 4px;
+  border-radius: 14px;
+}
+
+/* SQL disclosure */
+.ai-analyst-chat .sql-details {
+  margin-top: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(9, 20, 32, 0.52);
+}
+
+.ai-analyst-chat .sql-details summary {
+  position: relative;
+  padding: 11px 14px;
+  color: #91a9ba;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.ai-analyst-chat .sql-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-analyst-chat .sql-details summary::after {
+  content: "+";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #6f8b9d;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.ai-analyst-chat .sql-details[open] summary::after {
+  content: "−";
+}
+
+.ai-analyst-chat .sql-details summary:hover {
+  color: #c0d5df;
+  background: rgba(105, 183, 202, 0.035);
+}
+
+.ai-analyst-chat .sql-details pre {
+  margin: 0;
+  padding: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.09);
+  background: rgba(3, 10, 18, 0.46);
+  color: #9fc2cf;
+  font-family:
+    "Cascadia Code",
+    "SFMono-Regular",
+    Consolas,
+    monospace;
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* Correlation / analytical visualization separation */
+.ai-analyst-chat .correlation-map-wrapper {
+  margin-top: 18px !important;
+}
+
+/* Data quality insight */
+.ai-analyst-chat .chat-message.assistant strong {
+  letter-spacing: 0.01em;
+}
+
+/* Continue analysis */
+.ai-analyst-chat .ai-followups {
+  margin-top: 20px !important;
+  padding: 16px 0 2px !important;
+  border-top: 1px solid rgba(148, 163, 184, 0.10);
+}
+
+.ai-analyst-chat .ai-followups > span {
+  display: block;
+  margin-bottom: 10px;
+  color: #718b9c !important;
+  font-size: 9px !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase;
+}
+
+.ai-analyst-chat .ai-followups > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-analyst-chat .ai-followups button {
+  min-height: 34px;
+  padding: 7px 11px !important;
+  border: 1px solid rgba(105, 183, 202, 0.17) !important;
+  border-radius: 10px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(105, 183, 202, 0.07),
+      rgba(105, 183, 202, 0.025)
+    ) !important;
+  color: #9fc4cf !important;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.ai-analyst-chat .ai-followups button:hover {
+  border-color: rgba(105, 183, 202, 0.38) !important;
+  background: rgba(105, 183, 202, 0.10) !important;
+  color: #d0edf2 !important;
+}
+
+/* Agent trace gets supporting-evidence treatment */
+.ai-analyst-chat .agent-trace,
+.ai-analyst-chat .agent-execution-trace {
+  margin-top: 14px;
+}
+
+/* Keep analytical content from becoming visually cramped */
+.ai-analyst-chat .chat-message.assistant > .chat-message-text {
+  margin-bottom: 2px;
+}
+
+/* Mobile result workspace */
+@media (max-width: 680px) {
+  .ai-analyst-chat .assistant-message-actions {
+    justify-content: flex-start;
+  }
+
+  .ai-analyst-chat .assistant-message-actions button {
+    min-height: 32px;
+  }
+
+  .ai-analyst-chat .ai-followups > div {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .ai-analyst-chat .ai-followups button {
+    width: 100%;
+    text-align: left;
+  }
+
+  .ai-analyst-chat .sql-details pre {
+    font-size: 10px;
+  }
+}
+
+/* ============================================================
+   AGENT TRACE — OBSERVABILITY UI
+   ============================================================ */
+
+.agent-trace-panel {
+  margin-top: 14px !important;
+  border: 1px solid rgba(105, 183, 202, 0.16) !important;
+  border-radius: 14px !important;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(20, 34, 51, 0.88),
+      rgba(12, 24, 38, 0.88)
+    ) !important;
+  overflow: hidden !important;
+}
+
+.agent-trace-summary {
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  min-height: 42px !important;
+  padding: 11px 14px !important;
+  color: #cbd8e5 !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.04em !important;
+  cursor: pointer !important;
+  list-style: none !important;
+  transition:
+    background 140ms ease,
+    color 140ms ease !important;
+}
+
+.agent-trace-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-trace-summary:hover {
+  color: #dff6fa !important;
+  background: rgba(105, 183, 202, 0.055) !important;
+}
+
+.agent-trace-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  color: #78c9d8;
+  background: rgba(105, 183, 202, 0.09);
+  font-size: 12px;
+  font-weight: 900;
+  transition: transform 160ms ease;
+}
+
+.agent-trace-panel[open] .agent-trace-chevron {
+  transform: rotate(90deg);
+}
+
+.agent-trace-content {
+  padding: 4px 14px 14px;
+  border-top: 1px solid rgba(159, 181, 211, 0.08);
+}
+
+.agent-trace-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 4px;
+  border-bottom: 1px solid rgba(159, 181, 211, 0.075);
+}
+
+.agent-trace-step:last-of-type {
+  border-bottom: none;
+}
+
+.agent-trace-step-info {
+  min-width: 0;
+  color: #8fa8bb;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-trace-step-info strong {
+  color: #dceaf1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.agent-trace-step-status {
+  flex-shrink: 0;
+  color: #71879b;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.agent-trace-status-success {
+  color: #67d7a5 !important;
+  font-weight: 800;
+}
+
+.agent-trace-footer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(159, 181, 211, 0.08);
+  border-radius: 9px;
+  background: rgba(7, 18, 29, 0.42);
+  color: #7f95a8;
+  font-size: 10px;
+}
+
+.agent-trace-source-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #67d7a5;
+  box-shadow: 0 0 8px rgba(103, 215, 165, 0.38);
+}
+
+.agent-trace-sql {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(159, 181, 211, 0.08);
+  border-radius: 10px;
+  background: rgba(4, 12, 21, 0.48);
+}
+
+.agent-trace-sql-title {
+  margin-bottom: 7px;
+  color: #8fa8bb;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.agent-trace-sql pre {
+  margin: 0;
+  color: #a9c7d3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+@media (max-width: 680px) {
+  .agent-trace-step {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .agent-trace-step-status {
+    padding-left: 2px;
+  }
+
+  .agent-trace-summary {
+    min-height: 40px !important;
+  }
+}
+
+ 
+/* ============================================================
+   AGENT TRACE — STATUS BADGES
+   ============================================================ */
+
+.agent-trace-step-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.agent-trace-status-success {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 215, 165, 0.20);
+  background: rgba(103, 215, 165, 0.08);
+  color: #67d7a5 !important;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }

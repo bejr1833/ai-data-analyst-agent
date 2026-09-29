@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 export default function AgentTrace({ agent, sql }) {
   if (!agent || !Array.isArray(agent.plan)) {
@@ -8,7 +8,7 @@ export default function AgentTrace({ agent, sql }) {
   return (
     <details className="agent-trace-panel">
       <summary className="agent-trace-summary">
-        <span className="agent-trace-chevron">›</span>
+        <span className="agent-trace-chevron">&gt;</span>
         <span>Agent execution trace</span>
       </summary>
 
@@ -20,7 +20,7 @@ export default function AgentTrace({ agent, sql }) {
           >
             <div className="agent-trace-step-info">
               <strong>{step.tool}</strong>
-              <span> — {step.purpose}</span>
+              <span> - {step.purpose}</span>
             </div>
 
             <div className="agent-trace-step-status">
@@ -36,7 +36,7 @@ export default function AgentTrace({ agent, sql }) {
 
               {typeof step.duration_ms === "number" && (
                 <span>
-                  {" · "}
+                  {" | "}
                   {step.duration_ms} ms
                 </span>
               )}
@@ -53,7 +53,7 @@ export default function AgentTrace({ agent, sql }) {
               : "Local tools"}
           </span>
 
-          <span>·</span>
+          <span>|</span>
 
           <span>{agent.total_duration_ms} ms</span>
         </div>
@@ -71,3 +71,5 @@ export default function AgentTrace({ agent, sql }) {
     </details>
   );
 }
+
+

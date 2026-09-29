@@ -1,6 +1,7 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { askDataset } from "../api/client.js";
-import AnalysisChart from "./AnalysisChart";
+const AnalysisChart = lazy(() => import("./AnalysisChart"));
+import CorrelationHeatmap from "./CorrelationHeatmap";
 import DataStory from "./DataStory";
 import AgentTrace from "./AgentTrace";
 
@@ -38,11 +39,103 @@ function isValidVisualization(visualization) {
   if (!visualization || typeof visualization !== "object") return false;
 
   const { x, y, type } = visualization;
+  if (type === "histogram") {
+    return Boolean(x);
+  }
 
   return (
     Boolean(x) &&
     Boolean(y) &&
-    ["bar", "line", "scatter", "forecast"].includes(type)
+    ["bar", "line", "scatter", "pie", "forecast"].includes(type)
+  );
+}
+
+function ResultTable({ rows }) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return null;
+  }
+
+  const columns = Object.keys(rows[0] || {});
+
+  if (columns.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        marginTop: 16,
+        overflowX: "auto",
+        borderRadius: 14,
+        border: "1px solid rgba(105,183,202,.18)",
+        background: "rgba(17,29,44,.72)",
+      }}
+    >
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          minWidth: 520,
+          fontSize: 12,
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th
+                key={column}
+                style={{
+                  padding: "11px 14px",
+                  textAlign: "left",
+                  color: "#8fa8bb",
+                  fontWeight: 750,
+                  fontSize: 10,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  borderBottom:
+                    "1px solid rgba(105,183,202,.16)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {String(column).replace(/_/g, " ")}
+              </th>
+            ))}
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {columns.map((column) => {
+                const value = row?.[column];
+
+                return (
+                  <td
+                    key={`${rowIndex}-${column}`}
+                    style={{
+                      padding: "11px 14px",
+                      color: "#d8e5ef",
+                      borderBottom:
+                        "1px solid rgba(105,183,202,.08)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {typeof value === "number"
+                      ? value.toLocaleString("en-US", {
+                          maximumFractionDigits: 2,
+                        })
+                      : value == null
+                        ? "—"
+                        : String(value)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -58,6 +151,13 @@ function hasUsableChart(message) {
 
   const { type, x, y, forecastY = "forecast" } =
     message.visualization;
+
+  if (type === "histogram") {
+    return message.rows.some((row) => {
+      if (!row || typeof row !== "object") return false;
+      return Object.prototype.hasOwnProperty.call(row, x);
+    });
+  }
 
   if (type !== "forecast") {
     return message.rows.some((row) => {
@@ -81,6 +181,35 @@ function hasUsableChart(message) {
 
     return hasX && (hasY || hasForecast);
   });
+}
+
+function isCorrelationQuestion(message) {
+  const question = String(
+    message?.question || message?.userQuestion || ""
+  ).toLowerCase();
+
+  const answer = String(message?.text || "").toLowerCase();
+
+  return (
+    question.includes("correlation") ||
+    answer.includes("correlation between")
+  );
+}
+
+function isUniqueValuesQuestion(message) {
+  const question = String(
+    message?.question || message?.userQuestion || ""
+  ).toLowerCase();
+
+  const answer = String(message?.text || "").toLowerCase();
+
+  return (
+    question.includes("unique values") ||
+    question.includes("most unique") ||
+    question.includes("distinct values") ||
+    question.includes("most distinct") ||
+    answer.includes("most unique/distinct values")
+  );
 }
 
 function isDataQualityQuestion(message) {
@@ -133,18 +262,23 @@ function isMetricVisualization(visualization) {
   );
 }
 
-function MetricCard({ rows, visualization, answer }) {
+function MetricCard({ rows, visualization }) {
   const firstRow = rows?.[0];
-  const keys = firstRow && typeof firstRow === "object"
-    ? Object.keys(firstRow)
-    : [];
+
+  const keys =
+    firstRow && typeof firstRow === "object"
+      ? Object.keys(firstRow)
+      : [];
 
   const preferredKey = keys.find((key) =>
     ["result", "value", "total", "count", "average", "sum", "revenue"]
       .includes(String(key).toLowerCase())
   );
 
-  const value = preferredKey ? firstRow[preferredKey] : firstRow?.[keys[0]];
+  const value = preferredKey
+    ? firstRow[preferredKey]
+    : firstRow?.[keys[0]];
+
   const title = visualization?.title || "Analysis Result";
 
   return (
@@ -157,7 +291,8 @@ function MetricCard({ rows, visualization, answer }) {
         padding: "22px 24px",
         borderRadius: 18,
         border: "1px solid rgba(102, 217, 168, 0.24)",
-        background: "linear-gradient(145deg, rgba(20,45,55,.96), rgba(10,27,38,.96))",
+        background:
+          "linear-gradient(145deg, rgba(20,45,55,.96), rgba(10,27,38,.96))",
       }}
     >
       <div
@@ -172,6 +307,7 @@ function MetricCard({ rows, visualization, answer }) {
       >
         {title}
       </div>
+
       <div
         style={{
           fontSize: 32,
@@ -183,22 +319,9 @@ function MetricCard({ rows, visualization, answer }) {
       >
         {formatNumber(value)}
       </div>
-      {answer && (
-        <div
-          style={{
-            marginTop: 10,
-            color: "#c7d5e8",
-            fontSize: 13,
-            lineHeight: 1.55,
-          }}
-        >
-          {answer}
-        </div>
-      )}
     </div>
   );
 }
-
 function DataQualityTable({ rows }) {
   const qualityRows = rows.filter(isQualityRow);
 
@@ -535,7 +658,7 @@ function getFriendlyAnalysisError(error) {
 
   return detail;
 }
-export default function AIAnalyst({ datasetId }) {
+export default function AIAnalyst({ datasetId, correlation }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -801,6 +924,9 @@ export default function AIAnalyst({ datasetId }) {
             message.role === "assistant" &&
             isDataQualityQuestion(message);
 
+          const uniqueValuesQuestion =
+            message.role === "assistant" &&
+            isUniqueValuesQuestion(message);
           const metricResult =
             message.role === "assistant" &&
             isMetricVisualization(message.visualization);
@@ -823,9 +949,11 @@ export default function AIAnalyst({ datasetId }) {
                   : undefined
               }
             >
-              <div className="chat-message-text">
-                {message.text}
-              </div>
+              {!(message.role === "assistant" && metricResult) && (
+                <div className="chat-message-text">
+                  {message.text}
+                </div>
+              )}
 
               {message.role === "assistant" && (
                 <div className="assistant-message-actions">
@@ -842,7 +970,9 @@ export default function AIAnalyst({ datasetId }) {
                 </div>
               )}
 
-              {qualityQuestion ? (
+              {uniqueValuesQuestion ? (
+                <ResultTable rows={message.rows} />
+              ) : qualityQuestion ? (
                 <DataQualityTable
                   rows={message.rows}
                 />
@@ -850,7 +980,7 @@ export default function AIAnalyst({ datasetId }) {
                 <MetricCard
                   rows={message.rows}
                   visualization={message.visualization}
-                  answer={message.text}
+
                 />
               ) : (
                 hasUsableChart(message) && (
@@ -864,12 +994,12 @@ export default function AIAnalyst({ datasetId }) {
                       overflow: "visible",
                     }}
                   >
-                    <AnalysisChart
-                      rows={message.rows}
-                      visualization={
-                        message.visualization
-                      }
-                    />
+                    <Suspense fallback={<div style={{ minHeight: 220, display: "flex", alignItems: "center", justifyContent: "center", color: "#8fa8bb", fontSize: 12 }}>Loading visualization...</div>}>
+                      <AnalysisChart
+                        rows={message.rows}
+                        visualization={message.visualization}
+                      />
+                    </Suspense>
                   </div>
                 )
               )}
@@ -883,16 +1013,23 @@ export default function AIAnalyst({ datasetId }) {
                 )}
 
               {message.role === "assistant" &&
-                message.sql && (
-                  <details className="sql-details">
-                    <summary>SQL used</summary>
-                    <pre>{message.sql}</pre>
-                  </details>
+                isCorrelationQuestion(message) &&
+                correlation?.columns?.length > 0 &&
+                correlation?.matrix?.length > 0 && (
+                  <div
+                    style={{
+                      width: "100%",
+                      marginTop: 18,
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <CorrelationHeatmap data={correlation} />
+                  </div>
                 )}
-
               {message.role === "assistant" &&
                 message.rows?.length > 0 &&
                 !qualityQuestion &&
+                !uniqueValuesQuestion &&
                 !metricResult && (
                   <DataStory
                       result={{
@@ -957,20 +1094,60 @@ export default function AIAnalyst({ datasetId }) {
           );
         })}
 
-        {loading && (
-          <div className="chat-message assistant ai-loading-message">
-            <span className="ai-loading-dot" />
-            <span className="ai-loading-dot" />
-            <span className="ai-loading-dot" />
-            <span className="ai-loading-text">
-              Analyzing your dataset...
-            </span>
-          </div>
-        )}
+        {loading && <AnalystLoadingState />}
       </div>
     </section>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function AnalystLoadingState() {
+  return (
+    <div className="ai-analysis-loading">
+      <div className="ai-analysis-loading-orb">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div className="ai-analysis-loading-content">
+        <div className="ai-analysis-loading-title">
+          Analyzing your data
+        </div>
+
+        <div className="ai-analysis-loading-subtitle">
+          Querying the dataset and generating insights...
+        </div>
+
+        <div className="ai-analysis-loading-steps">
+          <span>Inspecting data</span>
+          <span>Running analysis</span>
+          <span>Preparing insight</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
 
 
 

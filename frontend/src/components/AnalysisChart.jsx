@@ -58,11 +58,14 @@ function axisTitle(value) {
     .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
+function yAxisTitle(visualization, y) {
+  return visualization?.y_label || axisTitle(y);
+}
 
 function chartTitle(visualization, x, y, rowCount = null) {
   let title =
     visualization?.title ||
-    `${axisTitle(y)} by ${axisTitle(x)}`;
+    `${yAxisTitle(visualization, y)} by ${axisTitle(x)}`;
 
   if (
     Number.isInteger(rowCount) &&
@@ -144,6 +147,239 @@ function ChartFrame({ title, children, footer }) {
   );
 }
 
+function HistogramChart({ rows, x, visualization }) {
+  const values = rows
+    .map((row) => Number(row?.[x]))
+    .filter((value) => Number.isFinite(value));
+
+  if (!values.length) return null;
+
+  const width = 1000;
+  const height = 480;
+  const left = 88;
+  const right = 34;
+  const top = 48;
+  const bottom = 78;
+
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue || 1;
+
+  const binCount = Math.min(
+    12,
+    Math.max(5, Math.ceil(Math.sqrt(values.length)))
+  );
+
+  const binWidth = range / binCount;
+
+  const bins = Array.from(
+    { length: binCount },
+    (_, index) => ({
+      index,
+      start: minValue + index * binWidth,
+      end:
+        index === binCount - 1
+          ? maxValue
+          : minValue + (index + 1) * binWidth,
+      count: 0,
+    })
+  );
+
+  values.forEach((value) => {
+    let index = Math.floor((value - minValue) / binWidth);
+
+    if (index >= binCount) {
+      index = binCount - 1;
+    }
+
+    if (index < 0) {
+      index = 0;
+    }
+
+    bins[index].count += 1;
+  });
+
+  const maxCount = Math.max(
+    1,
+    ...bins.map((bin) => bin.count)
+  );
+
+  const yTicks = niceTicks(0, maxCount, 5);
+
+  const scaleMax =
+    yTicks.length > 0
+      ? yTicks[yTicks.length - 1]
+      : maxCount;
+
+  const yRange = scaleMax || 1;
+
+  const yPos = (value) =>
+    top +
+    ((scaleMax - value) / yRange) *
+      chartHeight;
+
+  const barSlot = chartWidth / binCount;
+  const barGap = Math.min(8, barSlot * 0.08);
+
+  const barWidth = Math.max(
+    10,
+    barSlot - barGap
+  );
+
+  const title =
+    visualization?.title ||
+    `Distribution of ${axisTitle(x)}`;
+
+  const labelStep =
+    binCount > 8
+      ? Math.ceil(binCount / 6)
+      : 1;
+
+  return (
+    <ChartFrame
+      title={title}
+      footer={
+        <span>
+          {values.length} observations
+          {" · "}
+          {binCount} bins
+        </span>
+      }
+    >
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height="480"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={title}
+        style={{
+          display: "block",
+          width: "100%",
+          height: 480,
+        }}
+      >
+        {yTicks.map((tick, index) => {
+          const py = yPos(tick);
+
+          return (
+            <g key={`hist-y-${index}`}>
+              <line
+                x1={left}
+                x2={width - right}
+                y1={py}
+                y2={py}
+                stroke="rgba(159,181,211,.14)"
+                strokeDasharray="4 5"
+              />
+
+              <text
+                x={left - 12}
+                y={py + 4}
+                textAnchor="end"
+                fill="#DCE7F5"
+                fontSize="12"
+                fontWeight="600"
+              >
+                {formatCompact(tick)}
+              </text>
+            </g>
+          );
+        })}
+
+        <line
+          x1={left}
+          x2={left}
+          y1={top}
+          y2={height - bottom}
+          stroke="#8196AD"
+          strokeWidth="1.4"
+        />
+
+        <line
+          x1={left}
+          x2={width - right}
+          y1={height - bottom}
+          y2={height - bottom}
+          stroke="#8196AD"
+          strokeWidth="1.2"
+        />
+
+        {bins.map((bin, index) => {
+          const barHeight =
+            (bin.count / yRange) *
+            chartHeight;
+
+          const x =
+            left +
+            index * barSlot +
+            barGap / 2;
+
+          const y =
+            height -
+            bottom -
+            barHeight;
+
+          const showLabel =
+            index % labelStep === 0 ||
+            index === bins.length - 1;
+
+          return (
+            <g key={`hist-bin-${index}`}>
+              <rect
+                x={x}
+                y={y}
+                width={barWidth}
+                height={Math.max(2, barHeight)}
+                rx="3"
+                fill="#6B8FD3"
+                opacity="0.88"
+              />
+
+              {showLabel && (
+                <text
+                  x={x + barWidth / 2}
+                  y={height - bottom + 24}
+                  textAnchor="middle"
+                  fill="#91A2B7"
+                  fontSize="11"
+                >
+                  {formatCompact(bin.start)}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        <text
+          x={left + chartWidth / 2}
+          y={height - 18}
+          textAnchor="middle"
+          fill="#DCE7F5"
+          fontSize="12"
+          fontWeight="600"
+        >
+          {axisTitle(x)}
+        </text>
+
+        <text
+          x={20}
+          y={top + chartHeight / 2}
+          textAnchor="middle"
+          fill="#DCE7F5"
+          fontSize="12"
+          fontWeight="600"
+          transform={`rotate(-90 20 ${top + chartHeight / 2})`}
+        >
+          Frequency
+        </text>
+      </svg>
+    </ChartFrame>
+  );
+}
 function BarChart({ rows, x, y, visualization }) {
   const data = rows
     .map((row) => ({
@@ -298,7 +534,7 @@ function BarChart({ rows, x, y, visualization }) {
                 }
               >
                 {item.label.length > 18
-                  ? `${item.label.slice(0, 17)}…`
+                  ? `${item.label.slice(0, 17)}â€¦`
                   : item.label}
               </text>
             </g>
@@ -325,7 +561,7 @@ function BarChart({ rows, x, y, visualization }) {
           fontWeight="700"
           transform={`rotate(-90 17 ${top + chartHeight / 2})`}
         >
-          {axisTitle(y)}
+          {yAxisTitle(visualization, y)}
         </text>
       </svg>
 
@@ -660,7 +896,7 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
                 }
               >
                 {item.label.length > 16
-                  ? `${item.label.slice(0, 15)}…`
+                  ? `${item.label.slice(0, 15)}â€¦`
                   : item.label}
               </text>
             </g>
@@ -688,7 +924,7 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
           fontWeight="700"
           transform={`rotate(-90 20 ${top + chartHeight / 2})`}
         >
-          {axisTitle(y)}
+          {yAxisTitle(visualization, y)}
         </text>
 
         {/* Forecast transition marker */}
@@ -718,7 +954,7 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
         }}
       >
         <span>
-          <span style={{ color: "#4FC3B5" }}>●</span>{" "}
+          <span style={{ color: "#4FC3B5" }}>â—</span>{" "}
           {isForecastLabel(visualization)
             ? "Historical"
             : axisTitle(y)}
@@ -726,7 +962,7 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
 
         {isForecastLabel(visualization) && (
           <span>
-            <span style={{ color: "#F2B86B" }}>●</span>{" "}
+            <span style={{ color: "#F2B86B" }}>â—</span>{" "}
             Forecast
           </span>
         )}
@@ -735,6 +971,251 @@ function LineChart({ rows, x, y, visualization, forecastY }) {
   );
 }
 
+function PieChart({ rows, x, y, visualization }) {
+  const rawData = rows
+    .map((row) => ({
+      label: String(row?.[x] ?? ""),
+      value: Number(row?.[y]),
+    }))
+    .filter(
+      (item) =>
+        item.label &&
+        Number.isFinite(item.value) &&
+        item.value > 0
+    )
+
+  if (!rawData.length) return null
+
+  const data = rawData.slice(0, 8)
+  const total = data.reduce((sum, item) => sum + item.value, 0)
+
+  if (!Number.isFinite(total) || total <= 0) return null
+
+  const width = 1000
+  const height = 500
+  const centerX = 350
+  const centerY = 245
+  const radius = 165
+  const labelRadius = 108
+
+  const palette = [
+    "#6B8FD3",
+    "#9A7BB5",
+    "#5E9C7A",
+    "#C49A5A",
+    "#B86F7C",
+    "#5F9EA8",
+    "#8B8FA8",
+    "#A67C52",
+  ]
+
+  const polarToCartesian = (cx, cy, r, angle) => {
+    const radians = ((angle - 90) * Math.PI) / 180
+
+    return {
+      x: cx + r * Math.cos(radians),
+      y: cy + r * Math.sin(radians),
+    }
+  }
+
+  const describeArc = (startAngle, endAngle) => {
+    const start = polarToCartesian(
+      centerX,
+      centerY,
+      radius,
+      endAngle
+    )
+
+    const end = polarToCartesian(
+      centerX,
+      centerY,
+      radius,
+      startAngle
+    )
+
+    const largeArcFlag =
+      endAngle - startAngle > 180 ? 1 : 0
+
+    return [
+      `M ${centerX} ${centerY}`,
+      `L ${start.x} ${start.y}`,
+      `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+      "Z",
+    ].join(" ")
+  }
+
+  let currentAngle = 0
+
+  const slices = data.map((item, index) => {
+    const percentage = (item.value / total) * 100
+    const angle = (item.value / total) * 360
+
+    const startAngle = currentAngle
+    const endAngle = currentAngle + angle
+    const midAngle = startAngle + angle / 2
+
+    const labelPoint = polarToCartesian(
+      centerX,
+      centerY,
+      labelRadius,
+      midAngle
+    )
+
+    currentAngle = endAngle
+
+    return {
+      ...item,
+      percentage,
+      startAngle,
+      endAngle,
+      labelPoint,
+      color: palette[index % palette.length],
+    }
+  })
+
+  return (
+    <ChartFrame
+      title={
+        visualization?.title ||
+        `${yAxisTitle(visualization, y)} Distribution by ${axisTitle(x)}`
+      }
+    >
+      <div
+        style={{
+          width: "100%",
+          overflow: "hidden",
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          width="100%"
+          height="500"
+          role="img"
+          aria-label={
+            visualization?.title ||
+            `${yAxisTitle(visualization, y)} Distribution by ${axisTitle(x)}`
+          }
+          style={{
+            display: "block",
+            width: "100%",
+            height: "500px",
+          }}
+        >
+          {slices.map((slice, index) => (
+            <g key={`${slice.label}-${index}`}>
+              <path
+                d={describeArc(
+                  slice.startAngle,
+                  slice.endAngle
+                )}
+                fill={slice.color}
+                stroke="rgba(7,18,32,.95)"
+                strokeWidth="3"
+                opacity="0.94"
+              >
+                <title>
+                  {slice.label}: {formatNumber(slice.value)} (
+                  {slice.percentage.toFixed(1)}%)
+                </title>
+              </path>
+
+              {slice.percentage >= 4 && (
+                <text
+                  x={slice.labelPoint.x}
+                  y={slice.labelPoint.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="#FFFFFF"
+                  fontSize="14"
+                  fontWeight="800"
+                  paintOrder="stroke"
+                  stroke="rgba(7,18,32,.72)"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {slice.percentage.toFixed(1)}%
+                </text>
+              )}
+            </g>
+          ))}
+
+          <circle
+            cx={centerX}
+            cy={centerY}
+            r="58"
+            fill="rgba(20,32,51,.96)"
+            stroke="rgba(159,181,211,.14)"
+            strokeWidth="1"
+          />
+
+          <text
+            x={centerX}
+            y={centerY - 5}
+            textAnchor="middle"
+            fill="#91A2B7"
+            fontSize="11"
+            fontWeight="700"
+          >
+            TOTAL
+          </text>
+
+          <text
+            x={centerX}
+            y={centerY + 17}
+            textAnchor="middle"
+            fill="#EDF3F8"
+            fontSize="14"
+            fontWeight="800"
+          >
+            {formatCompact(total)}
+          </text>
+
+          <g transform="translate(590 82)">
+            {slices.map((slice, index) => (
+              <g
+                key={`legend-${slice.label}-${index}`}
+                transform={`translate(0 ${index * 42})`}
+              >
+                <rect
+                  x="0"
+                  y="-11"
+                  width="12"
+                  height="12"
+                  rx="3"
+                  fill={slice.color}
+                />
+
+                <text
+                  x="22"
+                  y="0"
+                  fill="#EAF2FA"
+                  fontSize="13"
+                  fontWeight="700"
+                >
+                  {slice.label.length > 22
+                    ? `${slice.label.slice(0, 21)}…`
+                    : slice.label}
+                </text>
+
+                <text
+                  x="22"
+                  y="19"
+                  fill="#91A2B7"
+                  fontSize="11"
+                  fontWeight="600"
+                >
+                  {slice.percentage.toFixed(1)}% ·{" "}
+                  {formatNumber(slice.value)}
+                </text>
+              </g>
+            ))}
+          </g>
+        </svg>
+      </div>
+    </ChartFrame>
+  )
+}
 function isForecastLabel(visualization) {
   return visualization?.type === "forecast";
 }
@@ -807,9 +1288,9 @@ function ScatterChart({ rows, x, y, visualization }) {
           <strong style={{ color: "#EDF3F8" }}>
             {Number.isFinite(correlation)
               ? correlation.toFixed(4)
-              : "—"}
+              : "â€”"}
           </strong>
-          {" · "}
+          {" Â· "}
           {data.length} observations
         </span>
       }
@@ -924,7 +1405,7 @@ function ScatterChart({ rows, x, y, visualization }) {
           fontWeight="700"
           transform={`rotate(-90 17 ${top + chartHeight / 2})`}
         >
-          {axisTitle(y)}
+          {yAxisTitle(visualization, y)}
         </text>
 
         <g>
@@ -948,7 +1429,7 @@ function ScatterChart({ rows, x, y, visualization }) {
             r ={" "}
             {Number.isFinite(correlation)
               ? correlation.toFixed(4)
-              : "—"}
+              : "â€”"}
           </text>
         </g>
       </svg>
@@ -1000,7 +1481,30 @@ export default function AnalysisChart({
     forecastY = "forecast",
   } = visualization;
 
+  if (type === "histogram") {
+    if (!x) return null;
+
+    return (
+      <HistogramChart
+        rows={rows}
+        x={x}
+        visualization={visualization}
+      />
+    );
+  }
+
   if (!x || !y) return null;
+
+  if (type === "pie") {
+    return (
+      <PieChart
+        rows={rows}
+        x={x}
+        y={y}
+        visualization={visualization}
+      />
+    )
+  }
 
   if (type === "scatter") {
     return (
@@ -1046,3 +1550,9 @@ export default function AnalysisChart({
     />
   );
 }
+
+
+
+
+
+

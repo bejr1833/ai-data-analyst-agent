@@ -453,7 +453,7 @@ export default function App() {
         <div className="brand">
 
           <span className="brand-mark">
-            â–¤
+            ◆
           </span>
 
           <span className="brand-name">
@@ -564,6 +564,7 @@ export default function App() {
               <section className="dashboard-section dashboard-ai-section">
                 <AIAnalyst
                   datasetId={dataset.dataset_id}
+                  correlation={charts?.correlation || null}
                 />
               </section>
             )}
@@ -716,6 +717,9 @@ export default function App() {
   );
 
 }
+
+
+
 
 
 

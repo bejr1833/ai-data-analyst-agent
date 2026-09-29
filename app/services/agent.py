@@ -91,6 +91,17 @@ class AnalystAgent:
                 "Explain the previous analysis using conversation context",
             )]
 
+        # Explicit comparison requests are grouped comparisons.
+        if (
+            "compare" in q
+            or "comparison" in q
+            or " versus " in q
+            or " vs " in q
+        ):
+            return [AgentStep(
+                "grouped_analysis",
+                "Compare the requested groups",
+            )]
         # Explicit Top-N/Bottom-N requests are rankings.
         if re.search(r"\b(?:top|bottom)\s+\d+\b", q):
             return [AgentStep(
@@ -134,11 +145,20 @@ class AnalystAgent:
                 "data profiling",
                 "quality summary",
                 "missing values",
+"unique values",
+"most unique",
+"distinct values",
+"most distinct",
                 "missing data",
                 "null values",
                 "null count",
                 "duplicates",
                 "duplicate rows",
+                "unique values",
+                "most unique",
+                "distinct values",
+                "most distinct",
+                "highest distinct",
                 "data completeness",
             ],
         ):
@@ -200,8 +220,9 @@ class AnalystAgent:
         if self._contains_any(
             q,
             [
-                "highest", "lowest", "top", "best", "worst", "most", "least",
+                "highest", "lowest", "top", "bottom", "best", "worst", "most", "least",
                 "maximum", "minimum", "leading", "largest", "smallest",
+                "ranked", "ranking", "rank",
             ],
         ):
             return [AgentStep(
@@ -556,10 +577,14 @@ class AnalystAgent:
 
     def _run_data_quality(self, dataset, question: str):
         """
-        Deterministic data-quality summary.
+        Deterministic data-quality analysis.
 
-        Returns dataset-level quality metrics plus per-column
-        null, distinct, and completeness information.
+        Supports:
+        - Full quality summary
+        - Missing/null column analysis
+        - Distinct/unique value analysis
+        - Duplicate row analysis
+        - Completeness analysis
         """
 
         if dataset is None or getattr(dataset, "con", None) is None:
@@ -576,7 +601,7 @@ class AnalystAgent:
 
             columns_result = con.execute(
                 """
-                SELECT column_name
+                SELECT column_name, data_type
                 FROM information_schema.columns
                 WHERE table_name = 'main_table'
                 ORDER BY ordinal_position
@@ -587,6 +612,11 @@ class AnalystAgent:
                 str(row[0])
                 for row in columns_result
             ]
+
+            column_types = {
+                str(row[0]): str(row[1])
+                for row in columns_result
+            }
 
             total_columns = len(column_names)
 
@@ -641,16 +671,54 @@ class AnalystAgent:
                     ) * 100.0
                 )
 
+                missing_pct = (
+                    0.0
+                    if column_total == 0
+                    else (
+                        null_count / column_total
+                    ) * 100.0
+                )
+
+                distinct_pct = (
+                    0.0
+                    if column_total == 0
+                    else (
+                        distinct_count / column_total
+                    ) * 100.0
+                )
+
+                if column_total > 0 and null_count == column_total:
+                    quality_status = "Critical"
+                elif missing_pct >= 20.0:
+                    quality_status = "Needs attention"
+                elif missing_pct > 0:
+                    quality_status = "Review"
+                else:
+                    quality_status = "Good"
+
                 rows.append(
                     {
                         "column_name": column,
+                        "data_type": column_types.get(
+                            column,
+                            "UNKNOWN",
+                        ),
                         "total_rows": column_total,
                         "null_count": null_count,
+                        "missing_pct": round(
+                            missing_pct,
+                            1,
+                        ),
                         "distinct_count": distinct_count,
+                        "distinct_pct": round(
+                            distinct_pct,
+                            1,
+                        ),
                         "completeness_pct": round(
                             completeness,
                             1,
                         ),
+                        "quality_status": quality_status,
                     }
                 )
 
@@ -665,35 +733,121 @@ class AnalystAgent:
                 ) * 100.0
             )
 
-            if total_nulls == 0:
-                missing_summary = "There are no missing/null values."
-            else:
-                missing_columns = [
-                    row["column_name"]
+            q = str(question).lower().strip()
+
+            response_rows = rows
+
+            if "missing" in q or "null" in q:
+                response_rows = [
+                    row
                     for row in rows
                     if row["null_count"] > 0
                 ]
 
-                missing_summary = (
-                    f"There are {total_nulls:,} missing/null values "
-                    f"across {len(missing_columns)} columns."
+                if not response_rows:
+                    answer = (
+                        "No columns contain missing/null values. "
+                        "All columns are 100% complete."
+                    )
+                else:
+                    missing_summary = [
+                        (
+                            f"{row['column_name']}: "
+                            f"{row['null_count']:,} missing "
+                            f"({row['missing_pct']:.1f}%)"
+                        )
+                        for row in response_rows
+                    ]
+
+                    answer = (
+                        "Columns with missing/null values: "
+                        + ", ".join(missing_summary)
+                        + "."
+                    )
+
+            elif "unique" in q or "distinct" in q:
+                response_rows = sorted(
+                    rows,
+                    key=lambda row: row["distinct_count"],
+                    reverse=True,
+                )[:5]
+
+                unique_summary = [
+                    (
+                        f"{row['column_name']}: "
+                        f"{row['distinct_count']:,} distinct values "
+                        f"({row['distinct_pct']:.1f}% of rows)"
+                    )
+                    for row in response_rows
+                ]
+
+                answer = (
+                    "Columns with the most unique/distinct values: "
+                    + ", ".join(unique_summary)
+                    + "."
                 )
 
-            duplicate_summary = (
-                "There are no duplicate rows."
-                if duplicate_rows == 0
-                else f"There are {duplicate_rows:,} duplicate rows."
-            )
+            elif "duplicate" in q:
+                response_rows = []
 
-            answer = (
-                f"Data quality summary:\n"
-                f"• Rows: {total_rows:,}\n"
-                f"• Columns: {total_columns:,}\n"
-                f"• Overall completeness: {overall_completeness:.1f}%\n"
-                f"• Missing/null values: {total_nulls:,}\n"
-                f"• Duplicate rows: {duplicate_rows:,}\n\n"
-                f"{missing_summary} {duplicate_summary}"
-            )
+                if duplicate_rows == 0:
+                    answer = (
+                        "There are no duplicate rows in the dataset."
+                    )
+                else:
+                    answer = (
+                        f"The dataset contains "
+                        f"{duplicate_rows:,} duplicate rows."
+                    )
+
+            elif (
+                "completeness" in q
+                or "complete" in q
+            ):
+                answer = (
+                    f"Overall data completeness is "
+                    f"{overall_completeness:.1f}%. "
+                    f"There are {total_nulls:,} missing/null values "
+                    f"across {total_columns:,} columns."
+                )
+
+            else:
+                attention_columns = [
+                    row
+                    for row in rows
+                    if row["quality_status"] != "Good"
+                ]
+
+                if not attention_columns:
+                    quality_detail = (
+                        "All columns passed the quality checks."
+                    )
+                else:
+                    attention_summary = [
+                        (
+                            f"{row['column_name']} "
+                            f"({row['missing_pct']:.1f}% missing, "
+                            f"status: {row['quality_status']})"
+                        )
+                        for row in attention_columns
+                    ]
+
+                    quality_detail = (
+                        "Columns needing attention: "
+                        + ", ".join(attention_summary)
+                        + "."
+                    )
+
+                answer = (
+                    f"Data quality summary:\n"
+                    f"- Rows: {total_rows:,}\n"
+                    f"- Columns: {total_columns:,}\n"
+                    f"- Overall completeness: "
+                    f"{overall_completeness:.1f}%\n"
+                    f"- Missing/null values: {total_nulls:,}\n"
+                    f"- Duplicate rows: {duplicate_rows:,}\n\n"
+                    f"{quality_detail}"
+                )
 
             return {
                 "question": question,
@@ -705,13 +859,17 @@ class AnalystAgent:
                 ),
                 "columns": [
                     "column_name",
+                    "data_type",
                     "total_rows",
                     "null_count",
+                    "missing_pct",
                     "distinct_count",
+                    "distinct_pct",
                     "completeness_pct",
+                    "quality_status",
                 ],
-                "rows": rows,
-                "row_count": len(rows),
+                "rows": response_rows,
+                "row_count": len(response_rows),
                 "model": "local",
                 "visualization": {
                     "type": "table",
@@ -872,6 +1030,14 @@ class AnalystAgent:
             return alias_matches[0][1]
 
         return None
+
+
+
+
+
+
+
+
 
 
 

@@ -738,14 +738,48 @@ def _choose_grouped_visualization(
     """
     Choose a chart for grouped/business results based on the
     user's question.
-
-    Current frontend supports bar, line and scatter.
     """
 
     q = question.lower().strip()
 
-    # Correlation/relationship questions should use scatter only
-    # when both plotted columns are numeric.
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
+    readable_y = y_column.replace("_", " ").title()
+    readable_x = x_column.replace("_", " ").title()
+
+    # Detect aggregation from the user's question
+    if any(word in q for word in ["average", "avg", "mean"]):
+        operation_name = "Average"
+
+    elif any(word in q for word in ["count", "number of", "how many"]):
+        operation_name = "Count"
+
+    elif any(word in q for word in [
+        "maximum",
+        "max",
+        "highest",
+        "largest",
+    ]):
+        operation_name = "Maximum"
+
+    elif any(word in q for word in [
+        "minimum",
+        "min",
+        "lowest", "bottom",
+        "smallest",
+    ]):
+        operation_name = "Minimum"
+
+    else:
+        operation_name = "Total"
+
+    if operation_name == "Count":
+        metric_label = "Count"
+    else:
+        metric_label = f"{operation_name} {readable_y}"
+
+    # Correlation / relationship questions -> scatter
     scatter_words = [
         "correlation",
         "correlate",
@@ -779,10 +813,40 @@ def _choose_grouped_visualization(
                 "type": "scatter",
                 "x": x_column,
                 "y": y_column,
-                "title": f"{x_column} vs {y_column}",
+                "title": f"{readable_y} vs {readable_x}",
             }
 
-    # Trend/time questions -> line chart.
+    # Distribution / part-to-whole -> pie
+    pie_words = [
+        "distribution",
+        "distribute",
+        "share",
+        "percentage of total",
+        "percent of total",
+        "proportion",
+        "composition",
+        "breakdown",
+        "split",
+        "contribution",
+        "contributes",
+        "revenue share",
+        "sales share",
+        "category share",
+        "regional share",
+    ]
+
+    if any(word in q for word in pie_words):
+        return {
+            "type": "pie",
+            "x": x_column,
+            "y": y_column,
+            "title": (
+                f"{metric_label} "
+                f"Distribution by {readable_x}"
+            ),
+        }
+
+    # Trend / time questions -> line
     trend_words = [
         "trend",
         "over time",
@@ -801,24 +865,16 @@ def _choose_grouped_visualization(
             "type": "line",
             "x": x_column,
             "y": y_column,
-            "title": f"{y_column.replace('_', ' ').title()} over time",
+            "title": f"{metric_label} over time",
         }
 
-    # Default grouped visualization.
+    # Default grouped visualization -> bar
     return {
         "type": "bar",
         "x": x_column,
         "y": y_column,
-        "title": (
-            f"{y_column.replace('_', ' ').title()} "
-            f"by {x_column.replace('_', ' ').title()}"
-        ),
+        "title": f"{metric_label} by {readable_x}",
     }
-
-
-# ============================================================
-# LOCAL QUERY ENGINE
-# ============================================================
 
 def _try_local_query(
     dataset,
@@ -833,6 +889,9 @@ def _try_local_query(
     """
 
     q = question.lower().strip()
+
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
 
     # --------------------------------------------------------
     # ROW COUNT
@@ -1053,6 +1112,9 @@ def _try_business_insight_query(
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
     # --------------------------------------------------------
     # Detect ranking / comparison intent
     # --------------------------------------------------------
@@ -1065,10 +1127,13 @@ def _try_business_insight_query(
         "top",
         "best",
         "most",
+        "ranked",
+        "ranking",
+        "rank",
     ]
 
     lowest_words = [
-        "lowest",
+        "lowest", "bottom",
         "minimum",
         "min",
         "smallest",
@@ -1079,14 +1144,27 @@ def _try_business_insight_query(
     is_highest = any(word in q for word in highest_words)
     is_lowest = any(word in q for word in lowest_words)
 
+    print("BUSINESS FLAGS:", is_highest, is_lowest)
+
     if not is_highest and not is_lowest:
         return None
 
     # Explicit top-N / bottom-N requests must return N rows rather than
     # falling through to the single-winner business insight behavior.
     top_n_match = re.search(r"\b(?:top|bottom)\s+(\d+)\b", q)
-    requested_n = int(top_n_match.group(1)) if top_n_match else 1
-    requested_n = max(1, min(requested_n, 50))
+
+    is_rank_request = any(
+        word in q
+        for word in ["ranked", "ranking", "rank"]
+    )
+
+    if top_n_match:
+        requested_n = int(top_n_match.group(1))
+        requested_n = max(1, min(requested_n, 50))
+    elif is_rank_request:
+        requested_n = None
+    else:
+        requested_n = 1
 
     # --------------------------------------------------------
     # Get columns
@@ -1175,6 +1253,42 @@ def _try_business_insight_query(
         return None
 
     # --------------------------------------------------------
+    # Determine aggregation
+    # --------------------------------------------------------
+
+    if any(
+        word in q
+        for word in ["average", "avg", "mean"]
+    ):
+        aggregation = "AVG"
+        aggregation_label = "average"
+
+    elif any(
+        word in q
+        for word in ["count", "number of", "how many"]
+    ):
+        aggregation = "COUNT"
+        aggregation_label = "count"
+
+    elif any(
+        word in q
+        for word in ["maximum", "max", "highest", "largest"]
+    ):
+        aggregation = "MAX"
+        aggregation_label = "maximum"
+
+    elif any(
+        word in q
+        for word in ["minimum", "min", "lowest", "bottom", "smallest"]
+    ):
+        aggregation = "MIN"
+        aggregation_label = "minimum"
+
+    else:
+        aggregation = "SUM"
+        aggregation_label = "total"
+
+    # --------------------------------------------------------
     # Build SQL
     # --------------------------------------------------------
 
@@ -1200,19 +1314,29 @@ def _try_business_insight_query(
         order = "DESC"
         direction_text = "highest"
 
+    limit_clause = (
+        f"LIMIT {requested_n}"
+        if requested_n is not None
+        else ""
+    )
+
+    if aggregation == "COUNT":
+        aggregate_expression = f'COUNT({metric_identifier})'
+    else:
+        aggregate_expression = (
+            f'{aggregation}('
+            f'TRY_CAST({metric_identifier} AS DOUBLE)'
+            f')'
+        )
+
     sql = f"""
     SELECT
         {group_identifier} AS "{group_column}",
-        SUM(
-            TRY_CAST(
-                {metric_identifier}
-                AS DOUBLE
-            )
-        ) AS "{metric_column}"
+        {aggregate_expression} AS "{metric_column}"
     FROM main_table
     GROUP BY {group_identifier}
     ORDER BY "{metric_column}" {order}
-    LIMIT {requested_n}
+    {limit_clause}
     """
 
     # --------------------------------------------------------
@@ -1256,7 +1380,7 @@ def _try_business_insight_query(
     # Natural-language answer
     # --------------------------------------------------------
 
-    if requested_n > 1:
+    if is_rank_request or (requested_n is not None and requested_n > 1):
         ranked_lines = []
         for index, row in enumerate(rows, start=1):
             group_value = _display_value(row[0])
@@ -1265,9 +1389,15 @@ def _try_business_insight_query(
                 f"{index}. {group_value}: {metric_value}"
             )
 
+        ranking_metric_label = (
+            f"{aggregation_label} {readable_metric}"
+            if aggregation != "SUM"
+            else readable_metric
+        )
+
         answer = (
-            f"{direction_text.title()} {len(rows)} {readable_group}s "
-            f"by {readable_metric}:\n"
+            f"{'Ranked' if is_rank_request else direction_text.title()} {len(rows)} {readable_group}s "
+            f"by {ranking_metric_label}:\n"
             + "\n".join(ranked_lines)
         )
     else:
@@ -1284,20 +1414,35 @@ def _try_business_insight_query(
     # Visualization
     # --------------------------------------------------------
 
+    visualization_metric_label = (
+        f"{aggregation_label} {readable_metric}"
+        if aggregation != "SUM"
+        else readable_metric
+    )
+
+    if is_rank_request:
+        visualization_title = (
+            f"{visualization_metric_label.title()} ranked by "
+            f"{readable_group}"
+        )
+    elif is_lowest:
+        visualization_title = (
+            f"Bottom {requested_n} {readable_group}s by "
+            f"{visualization_metric_label}"
+        )
+    else:
+        visualization_title = (
+            f"Top {requested_n} {readable_group}s by "
+            f"{visualization_metric_label}"
+        )
+
     visualization = {
         "type": "bar",
         "x": group_column,
         "y": metric_column,
-        "title": (
-            (
-                f"{direction_text.title()} {readable_metric} by "
-                f"{readable_group}"
-                if requested_n == 1
-                else f"Top {requested_n} {readable_group}s by {readable_metric}"
-            )
-        ),
+        "y_label": visualization_metric_label,
+        "title": visualization_title,
     }
-
     # --------------------------------------------------------
     # Return
     # --------------------------------------------------------
@@ -1335,30 +1480,75 @@ def _try_grouped_query(
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
+    # --------------------------------------------------------
     # --------------------------------------------------------
     # Detect comparison questions
     # --------------------------------------------------------
 
-    comparison_mode = (
-        "compare" in q
-        and " between " in q
-        and " and " in q
-    )
-
+    comparison_mode = False
     comparison_values = []
 
-    if comparison_mode:
-        comparison_part = q.split(" between ", 1)[1]
-        comparison_part = comparison_part.split(" and ", 1)
+    if "compare" in q and " and " in q:
 
-        if len(comparison_part) == 2:
+        # Pattern: compare ... between North and South
+        if " between " in q:
+            comparison_part = q.split(" between ", 1)[1]
+            comparison_part = comparison_part.split(" and ", 1)
+
+            if len(comparison_part) == 2:
+                comparison_values = [
+                    comparison_part[0].strip(" .?!"),
+                    comparison_part[1].strip(" .?!"),
+                ]
+
+                comparison_values = [
+                    re.sub(
+                        r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
+                        "",
+                        value,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    for value in comparison_values
+                ]
+
+        # Pattern: compare ... of North and South
+        elif " of " in q:
+            comparison_part = q.split(" of ", 1)[1]
+            comparison_part = comparison_part.split(" and ", 1)
+
+            if len(comparison_part) == 2:
+                comparison_values = [
+                    comparison_part[0].strip(" .?!"),
+                    comparison_part[1].strip(" .?!"),
+                ]
+
+                comparison_values = [
+                    re.sub(
+                        r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
+                        "",
+                        value,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    for value in comparison_values
+                ]
+
+        if len(comparison_values) == 2:
             comparison_values = [
-                comparison_part[0].strip(" .?!"),
-                comparison_part[1].strip(" .?!"),
+                re.sub(
+                    r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
+                    "",
+                    value,
+                    flags=re.IGNORECASE,
+                ).strip()
+                for value in comparison_values
             ]
+            comparison_mode = True
 
     # Normal grouped questions require "by".
-    # Comparison questions use "between X and Y" instead.
+    # Comparison questions use "between X and Y" or "of X and Y".
     if " by " not in q and not comparison_mode:
         return None
 
@@ -1603,7 +1793,7 @@ def _try_grouped_query(
         for word in [
             "minimum",
             "min",
-            "lowest",
+            "lowest", "bottom",
             "smallest",
         ]
     ):
@@ -1805,12 +1995,32 @@ def _try_grouped_query(
         rows=rows,
     )
 
-    # Use a comparison-specific chart title when comparing
-    # exactly two groups.
+    # Use an aggregation-aware comparison chart title.
     if comparison_mode and len(comparison_values) == 2:
 
+        if aggregation == "AVG":
+            comparison_title = (
+                f"Average {metric_column.replace('_', ' ').title()} Comparison"
+            )
+        elif aggregation == "MAX":
+            comparison_title = (
+                f"Maximum {metric_column.replace('_', ' ').title()} Comparison"
+            )
+        elif aggregation == "MIN":
+            comparison_title = (
+                f"Minimum {metric_column.replace('_', ' ').title()} Comparison"
+            )
+        elif aggregation == "COUNT":
+            comparison_title = (
+                f"Count Comparison"
+            )
+        else:
+            comparison_title = (
+                f"{metric_column.replace('_', ' ').title()} Comparison"
+            )
+
         visualization["title"] = (
-            f"{metric_column.replace('_', ' ').title()} Comparison: "
+            f"{comparison_title}: "
             f"{comparison_values[0].title()} vs "
             f"{comparison_values[1].title()}"
         )
@@ -1841,13 +2051,15 @@ def _try_percentage_query(
     """
     Handle common percentage/rate questions locally with DuckDB.
 
-    This avoids sending deterministic percentage calculations to Gemini.
-    Currently supports questions such as:
-      - What percentage of units were returned?
-      - What percent of units were returned?
-      - What is the return rate?
+    Supports:
+      - Return-rate questions
+      - Grouped percentage-of-total questions such as:
+        "What percentage of revenue comes from each region?"
     """
     q = question.lower().strip()
+
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
 
     percentage_intent = (
         "percentage" in q
@@ -1859,12 +2071,189 @@ def _try_percentage_query(
         return None
 
     columns = list(getattr(dataset, "columns", []) or [])
-    lower_columns = {str(col).lower(): col for col in columns}
+    lower_columns = {
+        str(col).lower(): col
+        for col in columns
+    }
+
+    def quote_identifier(name):
+        return '"' + str(name).replace('"', '""') + '"'
+
+    # --------------------------------------------------------
+    # GROUPED PERCENTAGE-OF-TOTAL ANALYSIS
+    # Example:
+    # "What percentage of revenue comes from each region?"
+    # --------------------------------------------------------
+
+    grouped_words = (
+        "each" in q
+        or "by" in q
+        or "per" in q
+        or "from each" in q
+        or "contribution" in q
+        or "contributes" in q
+        or "share" in q
+        or "breakdown" in q
+        or "composition" in q
+        or "distribution" in q
+    )
+
+    metric_column = None
+
+    # Prefer an explicitly mentioned numeric metric.
+    for keyword, column_name in [
+        ("revenue", "revenue"),
+        ("sales", "sales"),
+        ("profit", "profit"),
+        ("amount", "amount"),
+        ("units sold", "units_sold"),
+        ("units", "units"),
+    ]:
+        if keyword in q and column_name in lower_columns:
+            metric_column = lower_columns[column_name]
+            break
+
+    # Try to identify a grouping/category column.
+    group_column = None
+
+    if "region" in q and "region" in lower_columns:
+        group_column = lower_columns["region"]
+    elif "category" in q and "category" in lower_columns:
+        group_column = lower_columns["category"]
+    elif "product" in q and "product" in lower_columns:
+        group_column = lower_columns["product"]
+    elif "segment" in q and "segment" in lower_columns:
+        group_column = lower_columns["segment"]
+    elif "country" in q and "country" in lower_columns:
+        group_column = lower_columns["country"]
+    elif "city" in q and "city" in lower_columns:
+        group_column = lower_columns["city"]
+    elif "department" in q and "department" in lower_columns:
+        group_column = lower_columns["department"]
+
+    if (
+        grouped_words
+        and metric_column is not None
+        and group_column is not None
+    ):
+        metric_sql = quote_identifier(metric_column)
+        group_sql = quote_identifier(group_column)
+
+        sql = f"""
+            WITH grouped AS (
+                SELECT
+                    {group_sql} AS group_value,
+                    SUM(
+                        TRY_CAST({metric_sql} AS DOUBLE)
+                    ) AS metric_value
+                FROM main_table
+                WHERE {group_sql} IS NOT NULL
+                GROUP BY {group_sql}
+            ),
+            totals AS (
+                SELECT
+                    SUM(metric_value) AS total_value
+                FROM grouped
+            )
+            SELECT
+                group_value,
+                metric_value,
+                CASE
+                    WHEN total_value = 0 THEN 0
+                    ELSE
+                        (metric_value * 100.0)
+                        / total_value
+                END AS percentage
+            FROM grouped
+            CROSS JOIN totals
+            ORDER BY metric_value DESC
+        """
+
+        started = time.perf_counter()
+
+        try:
+            rows_raw = dataset.con.execute(sql).fetchall()
+        except Exception as exc:
+            print(
+                "Grouped percentage query failed:",
+                repr(exc),
+            )
+            return None
+
+        duration_ms = round(
+            (time.perf_counter() - started) * 1000,
+            2,
+        )
+
+        if not rows_raw:
+            return None
+
+        rows = [
+            {
+                str(group_column): row[0],
+                str(metric_column): (
+                    float(row[1])
+                    if row[1] is not None
+                    else 0.0
+                ),
+                "percentage": (
+                    float(row[2])
+                    if row[2] is not None
+                    else 0.0
+                ),
+            }
+            for row in rows_raw
+        ]
+
+        total_value = sum(
+            row[str(metric_column)]
+            for row in rows
+        )
+
+        percentage_parts = [
+            f"{row[str(group_column)]}: {row['percentage']:.2f}%"
+            for row in rows
+        ]
+
+        answer = (
+            f"{metric_column.title()} share by "
+            f"{str(group_column)}: "
+            + ", ".join(percentage_parts)
+            + "."
+        )
+
+        return {
+            "question": question,
+            "type": "percentage_analysis",
+            "answer": answer,
+            "sql": sql.strip(),
+            "columns": [
+                str(group_column),
+                str(metric_column),
+                "percentage",
+            ],
+            "rows": rows,
+            "row_count": len(rows),
+            "model": "local",
+            "visualization": {
+                "type": "pie",
+                "x": str(group_column),
+                "y": "percentage",
+                "title": (
+                    f"{metric_column.title()} "
+                    f"Contribution by {str(group_column).title()}"
+                ),
+            },
+            "duration_ms": duration_ms,
+        }
+
+    # --------------------------------------------------------
+    # EXISTING RETURN-RATE ANALYSIS
+    # --------------------------------------------------------
 
     numerator = None
     denominator = None
 
-    # Returned units / total units.
     if (
         ("returned" in q or "return" in q)
         and ("unit" in q or "units" in q)
@@ -1879,7 +2268,6 @@ def _try_percentage_query(
             or lower_columns.get("total_units")
         )
 
-    # Explicit return-rate wording.
     if numerator is None and "return rate" in q:
         numerator = (
             lower_columns.get("returns")
@@ -1894,19 +2282,19 @@ def _try_percentage_query(
     if numerator is None or denominator is None:
         return None
 
-    def quote_identifier(name):
-        return '"' + str(name).replace('"', '""') + '"'
-
     numerator_sql = quote_identifier(numerator)
     denominator_sql = quote_identifier(denominator)
 
     sql = f"""
         SELECT
             (
-                SUM(TRY_CAST({numerator_sql} AS DOUBLE))
-                * 100.0
+                SUM(
+                    TRY_CAST({numerator_sql} AS DOUBLE)
+                ) * 100.0
             ) / NULLIF(
-                SUM(TRY_CAST({denominator_sql} AS DOUBLE)),
+                SUM(
+                    TRY_CAST({denominator_sql} AS DOUBLE)
+                ),
                 0
             ) AS percentage
         FROM main_table
@@ -1917,7 +2305,10 @@ def _try_percentage_query(
     try:
         row = dataset.con.execute(sql).fetchone()
     except Exception as exc:
-        print("Percentage query failed:", repr(exc))
+        print(
+            "Percentage query failed:",
+            repr(exc),
+        )
         return None
 
     duration_ms = round(
@@ -1955,7 +2346,6 @@ def _try_percentage_query(
         "duration_ms": duration_ms,
     }
 
-
 def _try_numeric_query(
     dataset,
     question: str,
@@ -1974,8 +2364,11 @@ def _try_numeric_query(
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
     # --------------------------------------------------------
-    # STEP 1 — Determine operation
+    # STEP 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Determine operation
     # --------------------------------------------------------
 
     if (
@@ -2017,7 +2410,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 2 — Get actual dataset columns
+    # STEP 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get actual dataset columns
     # --------------------------------------------------------
 
     schema_rows = dataset.con.execute(
@@ -2035,7 +2428,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 3 — Find column
+    # STEP 3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Find column
     # --------------------------------------------------------
 
     selected_column = None
@@ -2158,7 +2551,7 @@ def _try_numeric_query(
             "max",
             "min",
             "highest",
-            "lowest",
+            "lowest", "bottom",
             "largest",
             "smallest",
             "of",
@@ -2218,7 +2611,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 4 — Safely quote column
+    # STEP 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Safely quote column
     # --------------------------------------------------------
 
     quoted_column = (
@@ -2231,7 +2624,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 5 — Build SQL
+    # STEP 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Build SQL
     # --------------------------------------------------------
 
     if operation == "COUNT":
@@ -2256,7 +2649,7 @@ def _try_numeric_query(
         """
 
     # --------------------------------------------------------
-    # STEP 6 — Execute locally
+    # STEP 6 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Execute locally
     # --------------------------------------------------------
 
     try:
@@ -2284,7 +2677,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 7 — Format answer
+    # STEP 7 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Format answer
     # --------------------------------------------------------
 
     operation_names = {
@@ -2310,7 +2703,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 8 — Return local result
+    # STEP 8 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Return local result
     # --------------------------------------------------------
 
     return {
@@ -2348,6 +2741,9 @@ def _try_trend_query(dataset, question: str) -> dict | None:
     """
 
     q = question.lower().strip()
+
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
 
     trend_keywords = [
         "trend",
@@ -2538,11 +2934,18 @@ def _try_main_insight_query(
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
     insight_phrases = [
         "main insight",
         "key insight",
         "main takeaway",
         "key takeaway",
+        "most important business insight",
+        "most important insight",
+        "important business insight",
+        "business insight",
         "give me an insight",
         "give me insights",
         "what can you conclude",
@@ -2759,7 +3162,7 @@ def _try_main_insight_query(
             return None
 
         answer = "Main insights from the dataset:\n\n" + "\n".join(
-            f"• {insight}"
+            f"Ã¢â‚¬Â¢ {insight}"
             for insight in insights
         )
 
@@ -2859,6 +3262,9 @@ def _try_contextual_followup(
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
     # --------------------------------------------------------
     # Follow-up detection
     # --------------------------------------------------------
@@ -2912,6 +3318,11 @@ def _try_contextual_followup(
         "summarize these results",
         "summarize the results",
         "give me a summary of these results",
+        "explain the trend",
+        "explain this trend",
+        "what does this trend mean",
+        "describe the trend",
+        "what is the trend telling us",
         "why is that",
         "why is this",
         "why",
@@ -2931,6 +3342,11 @@ def _try_contextual_followup(
         "which one is the lowest",
         "which is the lowest",
         "what is lowest",
+        "which category contributes the most",
+        "which category contributes most",
+        "which contributes the most",
+        "which category has the highest",
+        "which category is highest",
     ]
 
     is_explanation = any(
@@ -3000,6 +3416,43 @@ def _try_contextual_followup(
     # fallback. Return the previous result immediately using only the
     # conversation payload. This avoids expensive dataset work and also
     # makes the follow-up resilient if a previous SQL field is missing.
+    # --------------------------------------------------------
+    # Scenario / projection follow-up
+    # --------------------------------------------------------
+    scenario_text = previous_text.lower()
+
+    scenario_markers = [
+        "projected",
+        "projection",
+        "increase by",
+        "decrease by",
+        "after a",
+        "if revenue",
+        "if sales",
+        "scenario",
+    ]
+
+    if is_explanation and any(
+        marker in scenario_text
+        for marker in scenario_markers
+    ):
+        answer = (
+            "This follows directly from the previous scenario analysis. "
+            f"{previous_text}"
+        )
+
+        return {
+            "question": question,
+            "type": "contextual_followup",
+            "answer": answer,
+            "sql": previous_assistant.get("sql"),
+            "columns": previous_assistant.get("columns") or [],
+            "rows": previous_rows,
+            "row_count": len(previous_rows),
+            "model": "local",
+            "visualization": previous_visualization,
+        }
+
     if is_explanation:
         # Explain a previous single-value analysis locally.
         answer = ""
@@ -3025,17 +3478,77 @@ def _try_contextual_followup(
                 import re
 
                 sum_match = re.search(
-                    r'SUM\s*\(\s*["`]?([A-Za-z_][A-Za-z0-9_]*)',
+                    r'SUM\s*\(\s*(?:TRY_CAST\s*\(\s*)?["`]?([A-Za-z_][A-Za-z0-9_]*)',
                     previous_sql,
                     re.IGNORECASE,
                 )
                 avg_match = re.search(
-                    r'AVG\s*\(\s*["`]?([A-Za-z_][A-Za-z0-9_]*)',
+                    r'AVG\s*\(\s*(?:TRY_CAST\s*\(\s*)?["`]?([A-Za-z_][A-Za-z0-9_]*)', 
                     previous_sql,
                     re.IGNORECASE,
                 )
 
-                if sum_match:
+                correlation_context = (
+                    "correlation" in previous_text.lower()
+                    or "correlation" in str(previous_result_type).lower()
+                    or (
+                        isinstance(previous_visualization, dict)
+                        and str(previous_visualization.get("type", "")).lower()
+                        in {"scatter", "correlation"}
+                    )
+                )
+
+                if correlation_context:
+                    if metric_value > 0.8:
+                        strength = "very strong"
+                    elif metric_value > 0.6:
+                        strength = "strong"
+                    elif metric_value > 0.4:
+                        strength = "moderate"
+                    elif metric_value > 0.2:
+                        strength = "weak"
+                    else:
+                        strength = "very weak"
+
+                    direction = (
+                        "positive"
+                        if metric_value > 0
+                        else "negative"
+                        if metric_value < 0
+                        else "no"
+                    )
+
+                    answer = (
+                        f"A correlation of {metric_value:.2f} indicates a "
+                        f"{strength} {direction} linear relationship between "
+                        f"the variables in the previous analysis. "
+                    )
+
+                    if metric_value > 0:
+                        answer += (
+                            "In this dataset, higher values of one variable "
+                            "tend to be associated with higher values of the "
+                            "other variable. "
+                        )
+                    elif metric_value < 0:
+                        answer += (
+                            "In this dataset, higher values of one variable "
+                            "tend to be associated with lower values of the "
+                            "other variable. "
+                        )
+                    else:
+                        answer += (
+                            "The variables show little to no linear "
+                            "relationship in this dataset. "
+                        )
+
+                    answer += (
+                        "Correlation indicates association, not causation, "
+                        "so this result alone does not establish that one "
+                        "variable causes changes in the other."
+                    )
+
+                elif sum_match:
                     source_column = sum_match.group(1)
                     readable_source = source_column.replace("_", " ")
                     answer = (
@@ -3064,6 +3577,53 @@ def _try_contextual_followup(
                         f"analysis result."
                     )
 
+        # Explain multi-row trend results using the previous rows.
+        if not answer and (
+            "trend" in q
+            or (
+                isinstance(previous_visualization, dict)
+                and previous_visualization.get("type") in {"line", "forecast"}
+            )
+            or previous_result_type in {"trend", "forecast"}
+        ) and previous_rows:
+            numeric_points = []
+
+            for row in previous_rows:
+                if not isinstance(row, dict):
+                    continue
+
+                numeric_values = [
+                    value
+                    for value in row.values()
+                    if isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                ]
+
+                if numeric_values:
+                    numeric_points.append(float(numeric_values[-1]))
+
+            if numeric_points:
+                first_value = numeric_points[0]
+                last_value = numeric_points[-1]
+                highest_value = max(numeric_points)
+                lowest_value = min(numeric_points)
+
+                if last_value > first_value:
+                    direction = "an upward overall movement"
+                elif last_value < first_value:
+                    direction = "a downward overall movement"
+                else:
+                    direction = "little overall change"
+
+                answer = (
+                    f"The trend shows {direction} across the available "
+                    f"{len(numeric_points):,} observations. "
+                    f"The values range from {lowest_value:,.0f} to "
+                    f"{highest_value:,.0f}. "
+                    f"The first observed value is {first_value:,.0f}, "
+                    f"while the latest observed value is {last_value:,.0f}."
+                )
+
         if not answer:
             answer = (
                 "The previous analysis returned: "
@@ -3083,16 +3643,11 @@ def _try_contextual_followup(
             "type": "contextual_followup",
             "answer": answer,
             "sql": previous_assistant.get("sql"),
-            "columns": (
-                list(previous_rows[0].keys())
-                if previous_rows
-                and isinstance(previous_rows[0], dict)
-                else []
-            ),
-            "rows": previous_rows,
-            "row_count": len(previous_rows),
+            "columns": [],
+            "rows": [],
+            "row_count": 0,
             "model": "local",
-            "visualization": previous_visualization,
+            "visualization": None,
         }
 
     # For a generic explanation request, preserve the previous analytical
@@ -3174,7 +3729,7 @@ def _try_contextual_followup(
             else numeric_candidates
         )
 
-        if "highest" in q:
+        if "highest" in q or "most" in q:
 
             selected = max(
                 candidates,
@@ -3238,8 +3793,46 @@ def _try_contextual_followup(
     if is_explanation:
 
         # ----------------------------------------------------
+        # Scenario / projection follow-up
+        # ----------------------------------------------------
+        scenario_text = previous_text.lower()
+
+        scenario_markers = [
+            "projected",
+            "projection",
+            "increase by",
+            "decrease by",
+            "after a",
+            "if revenue",
+            "if sales",
+            "scenario",
+        ]
+
+        if any(
+            marker in scenario_text
+            for marker in scenario_markers
+        ):
+            answer = (
+                "This follows directly from the previous scenario analysis. "
+                f"{previous_text}"
+            )
+
+            return {
+                "question": question,
+                "type": "contextual_followup",
+                "answer": answer,
+                "sql": previous_assistant.get("sql"),
+                "columns": previous_assistant.get("columns") or [],
+                "rows": previous_rows,
+                "row_count": len(previous_rows),
+                "model": "local",
+                "visualization": previous_visualization,
+            }
+
+        # ----------------------------------------------------
         # Single numeric result
         # ----------------------------------------------------
+
 
         if len(previous_rows) == 1:
 
@@ -3375,6 +3968,18 @@ def _try_contextual_followup(
                             (group for group in column_match.groups() if group),
                             None,
                         )
+
+                    # Handle SQL such as SUM(TRY_CAST("revenue" AS DOUBLE)).
+                    if not sql_source_column:
+                        cast_match = re.search(
+                            r'TRY_CAST\(\s*"([^"]+)"\s+AS\s+DOUBLE\s*\)',
+                            previous_sql,
+                            flags=re.IGNORECASE | re.DOTALL,
+                        )
+
+                        if cast_match:
+                            sql_source_column = cast_match.group(1)
+
 
                     # Never treat a generic SQL alias such as `result` or
                     # `count` as the actual dataset metric. If the SQL only
@@ -3776,27 +4381,27 @@ def analyze_with_llm(
     Pipeline:
 
         User question
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Query Engine
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Forecast Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Trend Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Statistical Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Business Insight Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Grouped Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local Numeric Analysis
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Gemini SQL Generation
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         DuckDB
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Local answer formatting
-              ↓
+              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
         Visualization
     """
 
@@ -3988,6 +4593,47 @@ def analyze_with_llm(
         print("==============================\\n")
         return statistical_result
 
+    # --------------------------------------------------------
+    # --------------------------------------------------------
+    # STEP 5
+    # Try dataset-level main insight analysis
+    # --------------------------------------------------------
+
+    main_insight_start = time.time()
+
+    main_insight_result = _try_main_insight_query(
+        dataset,
+        question,
+    )
+
+    print(
+        "Main insight:",
+        round(
+            time.time() - main_insight_start,
+            3,
+        ),
+        "seconds",
+    )
+
+    if main_insight_result is not None:
+
+        print(
+            "TOTAL:",
+            round(
+                time.time() - total_start,
+                3,
+            ),
+            "seconds",
+        )
+
+        print("RESULT: LOCAL MAIN INSIGHT")
+        print("==============================\n")
+
+        return main_insight_result
+
+    # --------------------------------------------------------
+    # STEP 6
+    # Try business insight analysis
     # --------------------------------------------------------
     # STEP 5
     # Try business insight analysis
@@ -4208,6 +4854,9 @@ def _try_statistical_query(dataset, question: str) -> dict | None:
 
     q = question.lower().strip()
 
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
+
     # --------------------------------------------------------
     # Get schema
     # --------------------------------------------------------
@@ -4282,6 +4931,73 @@ def _try_statistical_query(dataset, question: str) -> dict | None:
     # Correlation
     # --------------------------------------------------------
 
+    # --------------------------------------------------------
+    # Distribution / Histogram
+    # --------------------------------------------------------
+
+    if "distribution" in q:
+
+        if not selected_columns:
+            return None
+
+        column = selected_columns[0]
+
+        distribution_sql = f"""
+        SELECT
+            TRY_CAST("{column}" AS DOUBLE) AS "{column}"
+        FROM main_table
+        WHERE TRY_CAST("{column}" AS DOUBLE) IS NOT NULL
+        ORDER BY "{column}"
+        LIMIT 5000
+        """.strip()
+
+        try:
+            distribution_result = dataset.con.execute(
+                distribution_sql
+            )
+
+            distribution_columns = [
+                description[0]
+                for description in distribution_result.description
+            ]
+
+            distribution_rows = distribution_result.fetchall()
+
+        except Exception as exc:
+            print(
+                "Distribution query failed:",
+                repr(exc),
+            )
+            return None
+
+        if not distribution_rows:
+            return None
+
+        return {
+            "question": question,
+            "type": "statistical_analysis",
+            "answer": (
+                f"Distribution of {column} "
+                f"contains {len(distribution_rows)} numeric values."
+            ),
+            "sql": distribution_sql,
+            "columns": distribution_columns,
+            "rows": _serialize_rows(
+                distribution_columns,
+                distribution_rows,
+            ),
+            "chart_rows": _serialize_rows(
+                distribution_columns,
+                distribution_rows,
+            ),
+            "row_count": len(distribution_rows),
+            "model": "local",
+            "visualization": {
+                "type": "histogram",
+                "x": column,
+                "title": f"Distribution of {column}",
+            },
+        }
     if "correlation" in q or "correlation between" in q:
 
         if len(selected_columns) < 2:
@@ -4532,6 +5248,9 @@ def _try_forecast_query(dataset, question):
     from datetime import timedelta
 
     q = question.lower().strip()
+
+    print("BUSINESS QUERY:", question)
+    print("BUSINESS NORMALIZED:", q)
 
     # ----------------------------------------------------------
     # Detect forecast question
@@ -5250,4 +5969,31 @@ def _try_anomaly_query(dataset, question):
         )
 
         return None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

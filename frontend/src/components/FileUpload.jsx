@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+ï»¿import React, { useCallback, useRef, useState } from "react";
 
 export default function FileUpload({ onFile, busy, progress, error }) {
   const [dragOver, setDragOver] = useState(false);
@@ -78,7 +78,7 @@ export default function FileUpload({ onFile, busy, progress, error }) {
             </p>
 
             <p className="upload-sub">
-              CSV, TSV, Parquet, or Excel — large files are
+              CSV, TSV, Parquet, or Excel â€” large files are
               streamed and profiled without loading fully into memory
             </p>
           </>
@@ -103,7 +103,7 @@ export default function FileUpload({ onFile, busy, progress, error }) {
 
             <p className="upload-sub">
               {progress >= 100
-                ? "Upload complete — analyzing your dataset..."
+                ? "Upload complete â€” analyzing your dataset..."
                 : `${progress}% uploaded`}
             </p>
           </>
@@ -122,3 +122,4 @@ export default function FileUpload({ onFile, busy, progress, error }) {
     </div>
   );
 }
+
