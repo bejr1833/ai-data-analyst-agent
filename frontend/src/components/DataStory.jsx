@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 /* ==========================================================
    NUMBER FORMATTER
@@ -429,6 +429,61 @@ function buildTrendStory(rows, visualization) {
    MAIN DATA STORY COMPONENT
    ========================================================== */
 
+function cleanStoryText(value) {
+  if (value == null) return "";
+
+  let text = String(value);
+
+  /*
+   * Repair common UTF-8 / Windows-1252 mojibake.
+   */
+
+  text = text
+    .replace(/\u00E2\u20AC\u201D/g, "-")
+    .replace(/\u00E2\u20AC\u2013/g, "-")
+    .replace(/\u00E2\u20AC\u00A6/g, "...")
+    .replace(/\u00E2\u20AC\u201C/g, '"')
+    .replace(/\u00E2\u20AC\u009D/g, '"')
+    .replace(/\u00E2\u20AC\u2122/g, "'")
+    .replace(/\u00E2\u20AC\u02DC/g, "'")
+    .replace(/\u00C2\u00A0/g, " ")
+    .replace(/\u00C2/g, "")
+    .replace(/\u00EF\u00BF\u00BD/g, "")
+    .replace(/\uFFFD/g, "");
+
+  /*
+   * Remove the specific corrupted marker visible in
+   * the Key Insight text:
+   *
+   * AÃ¢â‚¬Â¦Ã¢â‚¬ South
+   * AÃ¢â‚¬Â¦Ã¢â‚¬ Phone
+   *
+   * while preserving South / Phone and the rest of
+   * the sentence.
+   */
+
+  text = text.replace(
+    /\u0041\s*\u00E2\u20AC\u00A6\s*\u00E2\u20AC[^\p{L}\p{N}]*/gu,
+    ""
+  );
+
+  /*
+   * Clean remaining mojibake fragments if any remain.
+   */
+
+  text = text
+    .replace(/[\u00E2\u00C3][\u201A\u20AC\u0080-\u009F][^\p{L}\p{N}\s]*/gu, "")
+    .replace(/[\u00E2\u00C3][\u201A\u20AC\u0080-\u009F]/gu, "")
+    .replace(/\u00E2[^\p{L}\p{N}\s]{1,8}/gu, "")
+    .replace(/\u00E2\u0080[^\p{L}\p{N}]*/gu, "")
+    .replace(/\u00C3[^\p{L}\p{N}]*/gu, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([,.;:!?])/g, "$1")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+
+  return text;
+}
 export default function DataStory({
   result,
 }) {
@@ -531,8 +586,9 @@ export default function DataStory({
         marginTop: "18px",
         padding: "16px 18px",
         borderRadius: "12px",
-        background: "#f8fafc",
-        border: "1px solid #e2e8f0",
+        background: "linear-gradient(135deg, rgba(15, 31, 43, 0.96), rgba(18, 39, 48, 0.92))",
+        border: "1px solid rgba(74, 222, 200, 0.22)",
+        boxShadow: "0 12px 32px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04)",
       }}
     >
       <div
@@ -540,27 +596,33 @@ export default function DataStory({
           fontSize: "15px",
           fontWeight: 700,
           marginBottom: "8px",
-          color: "#0f172a",
+          color: "#7ff7d4",
           display: "block",
           visibility: "visible",
           opacity: 1,
         }}
       >
-        💡 Key Insight
+        Key Insight
       </div>
 
       <div
         style={{
           fontSize: "14px",
           lineHeight: 1.6,
-          color: "#334155",
+          color: "#d7e8e6",
+          fontWeight: 500,
           display: "block",
           visibility: "visible",
           opacity: 1,
         }}
       >
-        {story}
+        {cleanStoryText(story)}
       </div>
     </div>
   );
 }
+
+
+
+
+

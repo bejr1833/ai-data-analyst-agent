@@ -1,4 +1,4 @@
-
+﻿
 """
 Agentic AI Data Analyst orchestration layer.
 
@@ -318,6 +318,16 @@ class AnalystAgent:
                 "how did you get that",
                 "summarize these results",
                 "summarize the results",
+                "explain the difference",
+                "explain the main difference",
+                "difference in these results",
+                "difference between these results",
+                "differences in these results",
+                "differences between these results",
+                "compare these results",
+                "compare the results",
+                "comparison of these results",
+                "main difference",
             ]
 
             contextual_requested = any(
@@ -1030,6 +1040,7 @@ class AnalystAgent:
             return alias_matches[0][1]
 
         return None
+
 
 
 

@@ -5,15 +5,45 @@ import CorrelationHeatmap from "./CorrelationHeatmap";
 import DataStory from "./DataStory";
 import AgentTrace from "./AgentTrace";
 
-const BASE_SUGGESTIONS = [
-  "What is the total revenue?",
-  "Show total revenue by region",
-  "Which region has the highest revenue?",
-  "Show revenue trend over time",
-  "Forecast revenue for the next 7 days",
-  "What is the correlation between revenue and marketing spend?",
-  "What if revenue increases by 20%?",
-  "Show me the data quality summary",
+const SUGGESTION_GROUPS = [
+  {
+    label: "Revenue",
+    questions: [
+      "What is the total revenue?",
+      "Show revenue trend over time",
+    ],
+  },
+  {
+    label: "Regions",
+    questions: [
+      "Show total revenue by region",
+      "Which region has the highest revenue?",
+    ],
+  },
+  {
+    label: "Forecast",
+    questions: [
+      "Forecast revenue for the next 7 days",
+    ],
+  },
+  {
+    label: "Relationships",
+    questions: [
+      "What is the correlation between revenue and marketing spend?",
+    ],
+  },
+  {
+    label: "Scenarios",
+    questions: [
+      "What if revenue increases by 20%?",
+    ],
+  },
+  {
+    label: "Data Quality",
+    questions: [
+      "Show me the data quality summary",
+    ],
+  },
 ];
 
 function extractRows(result) {
@@ -126,7 +156,7 @@ function ResultTable({ rows }) {
                           maximumFractionDigits: 2,
                         })
                       : value == null
-                        ? "—"
+                        ? "â€”"
                         : String(value)}
                   </td>
                 );
@@ -140,27 +170,30 @@ function ResultTable({ rows }) {
 }
 
 function hasUsableChart(message) {
+  const chartRows = Array.isArray(message?.chartRows)
+    ? message.chartRows
+    : message?.rows;
+
   if (
     message?.role !== "assistant" ||
-    !Array.isArray(message?.rows) ||
-    message.rows.length === 0 ||
+    !Array.isArray(chartRows) ||
+    chartRows.length === 0 ||
     !isValidVisualization(message?.visualization)
   ) {
     return false;
   }
 
-  const { type, x, y, forecastY = "forecast" } =
-    message.visualization;
+  const { type, x, y } = message.visualization;
 
   if (type === "histogram") {
-    return message.rows.some((row) => {
+    return chartRows.some((row) => {
       if (!row || typeof row !== "object") return false;
       return Object.prototype.hasOwnProperty.call(row, x);
     });
   }
 
   if (type !== "forecast") {
-    return message.rows.some((row) => {
+    return chartRows.some((row) => {
       if (!row || typeof row !== "object") return false;
       return (
         Object.prototype.hasOwnProperty.call(row, x) &&
@@ -169,20 +202,19 @@ function hasUsableChart(message) {
     });
   }
 
-  return message.rows.some((row) => {
+  return chartRows.some((row) => {
     if (!row || typeof row !== "object") return false;
 
     const hasX = Object.prototype.hasOwnProperty.call(row, x);
     const hasY = Object.prototype.hasOwnProperty.call(row, y);
     const hasForecast = Object.prototype.hasOwnProperty.call(
       row,
-      forecastY
+      "forecast"
     );
 
     return hasX && (hasY || hasForecast);
   });
 }
-
 function isCorrelationQuestion(message) {
   const question = String(
     message?.question || message?.userQuestion || ""
@@ -242,9 +274,93 @@ function isQualityRow(row) {
   );
 }
 
+function cleanDisplayText(value) {
+  if (value == null) return "";
+
+  let text = String(value);
+
+  /*
+   * Repair common UTF-8 -> Windows-1252 mojibake.
+   *
+   * Examples:
+   * â€”  -> -
+   * â€“  -> -
+   * â€¦  -> ...
+   * â€œ  -> "
+   * â€ -> "
+   * â€™  -> '
+   * Â    -> removed
+   * Ã©  -> é
+   */
+
+  const replacements = [
+    [/\u00E2\u20AC\u201D/g, "-"],
+    [/\u00E2\u20AC\u2013/g, "-"],
+    [/\u00E2\u20AC\u00A6/g, "..."],
+    [/\u00E2\u20AC\u201C/g, '"'],
+    [/\u00E2\u20AC\u009D/g, '"'],
+    [/\u00E2\u20AC\u2122/g, "'"],
+    [/\u00E2\u20AC\u02DC/g, "'"],
+
+    [/\u00C2\u00A0/g, " "],
+    [/\u00C2/g, ""],
+
+    [/\u00E2\u2020\u2019/g, "->"],
+    [/\u00E2\u2020\u0090/g, "<-"],
+
+    [/\u00E2\u20AC\u00A2/g, "-"],
+    [/\u00E2\u0080\u00A2/g, "-"],
+
+    [/\u00EF\u00BF\u00BD/g, ""]
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement);
+  }
+
+  /*
+   * Remove leftover mojibake fragments that commonly appear
+   * when a UTF-8 punctuation character was decoded incorrectly.
+   */
+
+  text = text
+    .replace(/\u00E2\u20AC[^\s]*/g, "")
+    .replace(/\u00E2\u0080[^\s]*/g, "")
+    .replace(/\u00C3[^\s]*/g, "")
+    .replace(/\u00C2[^\s]*/g, "");
+
+  /*
+   * Specific cleanup for the malformed fragments visible
+   * in the current AI Analyst output, e.g.
+   *
+   * Aâ€¦â€ South
+   * Aâ€¦â€ Phone
+   *
+   * Keep the actual value ("South", "Phone") while removing
+   * the corrupted marker.
+   */
+
+  text = text
+    .replace(/A\s*(?:\.\.\.)?\s*(?:-)?\s*/g, (match) => {
+      return match.length > 2 ? "" : match;
+    });
+
+  /*
+   * Remove replacement characters and clean spacing.
+   */
+
+  text = text
+    .replace(/\uFFFD/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([,.;:!?])/g, "$1")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+
+  return text;
+}
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") {
-    return "â€”";
+    return "Ã¢â‚¬â€";
   }
 
   const number = Number(value);
@@ -662,10 +778,12 @@ export default function AIAnalyst({ datasetId, correlation }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
+    const [suggestionsOpen, setSuggestionsOpen] = useState(true);
+useEffect(() => {
     setHydrated(false);
 
     if (!datasetId) {
@@ -715,6 +833,7 @@ export default function AIAnalyst({ datasetId, correlation }) {
     ]);
 
     setQuestion("");
+    setSuggestionsOpen(false);
     setLoading(true);
 
     try {
@@ -794,8 +913,75 @@ export default function AIAnalyst({ datasetId, correlation }) {
     }
   }
 
-  function useSuggestion(text) {
-    if (!loading) setQuestion(text);
+  async function useSuggestion(text) {
+    if (loading || !datasetId || !text?.trim()) return;
+
+    const trimmed = text.trim();
+
+    const conversationHistory =
+      buildConversationHistory(messages);
+
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", text: trimmed },
+    ]);
+
+    setQuestion("");
+    setSuggestionsOpen(false);
+    setLoading(true);
+
+    try {
+      const result = await askDataset(
+        datasetId,
+        trimmed,
+        conversationHistory
+      );
+
+      const resultRows = extractRows(result);
+
+      const assistantMessage = {
+        role: "assistant",
+        text: result?.answer || "No answer returned.",
+        rows: resultRows,
+        chartRows: Array.isArray(result?.chart_rows)
+          ? result.chart_rows
+          : resultRows,
+        columns: Array.isArray(result?.columns)
+          ? result.columns
+          : [],
+        sql: result?.sql || "",
+        visualization: result?.visualization || null,
+        model: result?.model || "",
+        followUps: Array.isArray(result?.follow_ups)
+          ? result.follow_ups
+          : [],
+      };
+
+      setMessages((previous) => [
+        ...previous,
+        assistantMessage,
+      ]);
+    } catch (error) {
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          text:
+            error?.message ||
+            "Something went wrong while analyzing the dataset.",
+          rows: [],
+          chartRows: [],
+          columns: [],
+          sql: "",
+          visualization: null,
+          model: "",
+          followUps: [],
+          error: true,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function copyAnswer(message, index) {
@@ -872,45 +1058,6 @@ export default function AIAnalyst({ datasetId, correlation }) {
         </div>
       </div>
 
-      <div className="ai-analyst-suggestions">
-        {BASE_SUGGESTIONS.map((suggestion) => (
-          <button
-            type="button"
-            key={suggestion}
-            onClick={() => useSuggestion(suggestion)}
-            disabled={loading}
-          >
-            {suggestion}
-          </button>
-        ))}
-      </div>
-
-      <form
-        onSubmit={handleAsk}
-        className="ai-analyst-form"
-      >
-        <input
-          value={question}
-          onChange={(event) =>
-            setQuestion(event.target.value)
-          }
-          placeholder="Ask something about your data..."
-          disabled={loading}
-          autoComplete="off"
-        />
-
-        <button
-          type="submit"
-          disabled={
-            loading ||
-            !question.trim() ||
-            !datasetId
-          }
-        >
-          {loading ? "Analyzing..." : "Ask"}
-        </button>
-      </form>
-
       <div
         className="ai-analyst-chat"
         style={{
@@ -934,7 +1081,12 @@ export default function AIAnalyst({ datasetId, correlation }) {
           return (
             <div
               key={`${message.role}-${index}`}
-              className={`chat-message ${message.role}`}
+              className={`chat-message ${message.role}${
+  message.role === "user" &&
+  index === messages.length - 2
+    ? " latest-question"
+    : ""
+}`}
               style={
                 message.role === "assistant"
                   ? {
@@ -951,7 +1103,7 @@ export default function AIAnalyst({ datasetId, correlation }) {
             >
               {!(message.role === "assistant" && metricResult) && (
                 <div className="chat-message-text">
-                  {message.text}
+                  {cleanDisplayText(message.text)}
                 </div>
               )}
 
@@ -996,7 +1148,11 @@ export default function AIAnalyst({ datasetId, correlation }) {
                   >
                     <Suspense fallback={<div style={{ minHeight: 220, display: "flex", alignItems: "center", justifyContent: "center", color: "#8fa8bb", fontSize: 12 }}>Loading visualization...</div>}>
                       <AnalysisChart
-                        rows={message.rows}
+                        rows={
+                          Array.isArray(message.chartRows)
+                            ? message.chartRows
+                            : message.rows
+                        }
                         visualization={message.visualization}
                       />
                     </Suspense>
@@ -1096,6 +1252,117 @@ export default function AIAnalyst({ datasetId, correlation }) {
 
         {loading && <AnalystLoadingState />}
       </div>
+      
+      <div className="ai-analyst-bottom-panel">
+
+<div className="ai-insights-panel">
+
+  <button
+    type="button"
+    className="ai-insights-header"
+    onClick={() =>
+      setSuggestionsOpen((previous) => !previous)
+    }
+    aria-expanded={suggestionsOpen}
+  >
+    <div className="ai-insights-heading">
+
+      <span className="ai-insights-title">
+        Quick Insights
+      </span>
+
+      <span className="ai-insights-count">
+        {SUGGESTION_GROUPS.length} topics
+      </span>
+
+    </div>
+
+    <span
+      className={`ai-insights-chevron ${
+        suggestionsOpen ? "open" : ""
+      }`}
+      aria-hidden="true"
+    >
+      â–¾
+    </span>
+
+  </button>
+
+  <div
+    className={`ai-insights-content ${
+      suggestionsOpen ? "expanded" : "collapsed"
+    }`}
+  >
+
+    <div className="ai-insights-groups">
+
+      {SUGGESTION_GROUPS.map((group) => (
+
+        <div
+          className="ai-insight-group"
+          key={group.label}
+        >
+
+          <span className="ai-insight-group-label">
+            {group.label}
+          </span>
+
+          <div className="ai-insight-questions">
+
+            {group.questions.map((suggestion) => (
+
+              <button
+                type="button"
+                key={suggestion}
+                onClick={() => useSuggestion(suggestion)}
+                disabled={loading}
+                title={suggestion}
+              >
+                {suggestion}
+              </button>
+
+            ))}
+
+          </div>
+
+        </div>
+
+      ))}
+
+    </div>
+
+  </div>
+
+</div>
+
+<form
+          onSubmit={handleAsk}
+          className="ai-analyst-form"
+        >
+          <input
+            value={question}
+            onChange={(event) =>
+              setQuestion(event.target.value)
+            }
+            placeholder="Ask something about your data..."
+            disabled={loading}
+            autoComplete="off"
+          />
+
+          <button
+            type="submit"
+            disabled={
+              loading ||
+              !question.trim() ||
+              !datasetId
+            }
+          >
+            {loading ? "Analyzing..." : "Ask"}
+          </button>
+        </form>
+
+      </div>
+
     </section>
   );
 }
@@ -1142,6 +1409,14 @@ function AnalystLoadingState() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
 
 
 

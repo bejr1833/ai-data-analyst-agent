@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import numbers
 from typing import Any
@@ -2368,7 +2368,7 @@ def _try_numeric_query(
     print("BUSINESS NORMALIZED:", q)
 
     # --------------------------------------------------------
-    # STEP 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Determine operation
+    # STEP 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Determine operation
     # --------------------------------------------------------
 
     if (
@@ -2410,7 +2410,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Get actual dataset columns
+    # STEP 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Get actual dataset columns
     # --------------------------------------------------------
 
     schema_rows = dataset.con.execute(
@@ -2428,7 +2428,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Find column
+    # STEP 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Find column
     # --------------------------------------------------------
 
     selected_column = None
@@ -2611,7 +2611,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Safely quote column
+    # STEP 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Safely quote column
     # --------------------------------------------------------
 
     quoted_column = (
@@ -2624,7 +2624,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Build SQL
+    # STEP 5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Build SQL
     # --------------------------------------------------------
 
     if operation == "COUNT":
@@ -2649,7 +2649,7 @@ def _try_numeric_query(
         """
 
     # --------------------------------------------------------
-    # STEP 6 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Execute locally
+    # STEP 6 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Execute locally
     # --------------------------------------------------------
 
     try:
@@ -2677,7 +2677,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 7 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Format answer
+    # STEP 7 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Format answer
     # --------------------------------------------------------
 
     operation_names = {
@@ -2703,7 +2703,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 8 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Return local result
+    # STEP 8 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Return local result
     # --------------------------------------------------------
 
     return {
@@ -3162,7 +3162,7 @@ def _try_main_insight_query(
             return None
 
         answer = "Main insights from the dataset:\n\n" + "\n".join(
-            f"Ã¢â‚¬Â¢ {insight}"
+            f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {insight}"
             for insight in insights
         )
 
@@ -3329,6 +3329,16 @@ def _try_contextual_followup(
         "how did you calculate that",
         "how was that calculated",
         "how did you get that",
+        "explain the difference",
+        "explain the main difference",
+        "difference in these results",
+        "difference between these results",
+        "differences in these results",
+        "differences between these results",
+        "compare these results",
+        "compare the results",
+        "comparison of these results",
+        "main difference",
     ]
 
     ranking_phrases = [
@@ -3359,7 +3369,25 @@ def _try_contextual_followup(
         for phrase in ranking_phrases
     )
 
-    if not is_explanation and not is_ranking:
+    comparison_phrases = [
+        "explain the difference",
+        "explain the main difference",
+        "difference in these results",
+        "difference between these results",
+        "differences in these results",
+        "differences between these results",
+        "compare these results",
+        "compare the results",
+        "comparison of these results",
+        "main difference",
+    ]
+
+    is_comparison = any(
+        phrase in q
+        for phrase in comparison_phrases
+    )
+
+    if not is_explanation and not is_ranking and not is_comparison:
         return None
 
     # --------------------------------------------------------
@@ -3408,6 +3436,276 @@ def _try_contextual_followup(
 
     if not previous_text and not previous_rows:
         return None
+
+    # --------------------------------------------------------
+    # FAST-PATH COMPARISON FOLLOW-UP
+    # --------------------------------------------------------
+    # Compare the rows from the previous analysis locally.
+    # This prevents questions such as "Explain the main difference
+    # in these results" from being reinterpreted as a new SQL query.
+    # --------------------------------------------------------
+
+    if is_comparison and previous_rows:
+        comparison_rows = [
+            row
+            for row in previous_rows
+            if isinstance(row, dict)
+        ]
+
+        if comparison_rows:
+            # Find numeric columns.
+            numeric_columns = []
+
+            for key in comparison_rows[0].keys():
+                values = [
+                    row.get(key)
+                    for row in comparison_rows
+                    if isinstance(row.get(key), (int, float))
+                    and not isinstance(row.get(key), bool)
+                ]
+
+                if values:
+                    numeric_columns.append(key)
+
+            # Find a useful label/category column.
+            label_column = None
+
+            for key in comparison_rows[0].keys():
+                values = [
+                    row.get(key)
+                    for row in comparison_rows
+                    if row.get(key) is not None
+                    and not isinstance(row.get(key), (int, float))
+                    and not isinstance(row.get(key), bool)
+                ]
+
+                if len(set(map(str, values))) > 1:
+                    label_column = key
+                    break
+
+            # If no obvious label exists, use the first non-numeric column.
+            if label_column is None:
+                for key in comparison_rows[0].keys():
+                    if key not in numeric_columns:
+                        label_column = key
+                        break
+
+            # Prefer a numeric metric explicitly mentioned in the question.
+            primary_metric = None
+
+            for key in numeric_columns:
+                readable_key = str(key).replace("_", " ").lower()
+
+                if readable_key in q or any(
+                    word in q
+                    for word in readable_key.split()
+                    if len(word) > 3
+                ):
+                    primary_metric = key
+                    break
+
+            if primary_metric is None and numeric_columns:
+                primary_metric = numeric_columns[0]
+
+            if primary_metric is not None:
+                metric_rows = [
+                    row
+                    for row in comparison_rows
+                    if isinstance(
+                        row.get(primary_metric),
+                        (int, float),
+                    )
+                    and not isinstance(
+                        row.get(primary_metric),
+                        bool,
+                    )
+                ]
+
+                if len(metric_rows) >= 2:
+                    highest_row = max(
+                        metric_rows,
+                        key=lambda row: row.get(primary_metric),
+                    )
+
+                    lowest_row = min(
+                        metric_rows,
+                        key=lambda row: row.get(primary_metric),
+                    )
+
+                    highest_value = highest_row.get(primary_metric)
+                    lowest_value = lowest_row.get(primary_metric)
+
+                    difference = highest_value - lowest_value
+
+                    if lowest_value != 0:
+                        percentage_difference = (
+                            abs(difference)
+                            / abs(lowest_value)
+                        ) * 100
+                    else:
+                        percentage_difference = None
+
+                    metric_name = (
+                        str(primary_metric)
+                        .replace("_", " ")
+                        .strip()
+                    )
+
+                    highest_label = (
+                        highest_row.get(label_column)
+                        if label_column
+                        else "the highest group"
+                    )
+
+                    lowest_label = (
+                        lowest_row.get(label_column)
+                        if label_column
+                        else "the lowest group"
+                    )
+
+                    if isinstance(highest_value, float):
+                        highest_display = f"{highest_value:,.2f}"
+                    else:
+                        highest_display = f"{highest_value:,}"
+
+                    if isinstance(lowest_value, float):
+                        lowest_display = f"{lowest_value:,.2f}"
+                    else:
+                        lowest_display = f"{lowest_value:,}"
+
+                    if isinstance(difference, float):
+                        difference_display = f"{abs(difference):,.2f}"
+                    else:
+                        difference_display = f"{abs(difference):,}"
+
+                    answer = (
+                        f"The main difference is in {metric_name}. "
+                        f"{highest_label} has the highest value at "
+                        f"{highest_display}, while {lowest_label} "
+                        f"has the lowest at {lowest_display}. "
+                        f"That is a difference of "
+                        f"{difference_display}"
+                    )
+
+                    if percentage_difference is not None:
+                        answer += (
+                            f", or approximately "
+                            f"{percentage_difference:.1f}%"
+                            f" higher than the lowest value."
+                        )
+                    else:
+                        answer += "."
+
+                    # Add the next numeric metric when available.
+                    additional_metrics = [
+                        key
+                        for key in numeric_columns
+                        if key != primary_metric
+                    ]
+
+                    if additional_metrics:
+                        secondary_metric = additional_metrics[0]
+
+                        secondary_rows = [
+                            row
+                            for row in comparison_rows
+                            if isinstance(
+                                row.get(secondary_metric),
+                                (int, float),
+                            )
+                            and not isinstance(
+                                row.get(secondary_metric),
+                                bool,
+                            )
+                        ]
+
+                        if len(secondary_rows) >= 2:
+                            secondary_high = max(
+                                secondary_rows,
+                                key=lambda row: row.get(
+                                    secondary_metric
+                                ),
+                            )
+
+                            secondary_low = min(
+                                secondary_rows,
+                                key=lambda row: row.get(
+                                    secondary_metric
+                                ),
+                            )
+
+                            secondary_name = (
+                                str(secondary_metric)
+                                .replace("_", " ")
+                                .strip()
+                            )
+
+                            secondary_high_label = (
+                                secondary_high.get(label_column)
+                                if label_column
+                                else "the highest group"
+                            )
+
+                            secondary_low_label = (
+                                secondary_low.get(label_column)
+                                if label_column
+                                else "the lowest group"
+                            )
+
+                            secondary_high_value = (
+                                secondary_high.get(secondary_metric)
+                            )
+
+                            secondary_low_value = (
+                                secondary_low.get(secondary_metric)
+                            )
+
+                            if isinstance(
+                                secondary_high_value,
+                                float,
+                            ):
+                                secondary_high_display = (
+                                    f"{secondary_high_value:,.2f}"
+                                )
+                            else:
+                                secondary_high_display = (
+                                    f"{secondary_high_value:,}"
+                                )
+
+                            if isinstance(
+                                secondary_low_value,
+                                float,
+                            ):
+                                secondary_low_display = (
+                                    f"{secondary_low_value:,.2f}"
+                                )
+                            else:
+                                secondary_low_display = (
+                                    f"{secondary_low_value:,}"
+                                )
+
+                            answer += (
+                                f" For {secondary_name}, "
+                                f"{secondary_high_label} is highest at "
+                                f"{secondary_high_display}, while "
+                                f"{secondary_low_label} is lowest at "
+                                f"{secondary_low_display}."
+                            )
+
+                    return {
+                        "question": question,
+                        "type": "contextual_followup",
+                        "answer": answer,
+                        "sql": previous_assistant.get("sql"),
+                        "columns": (
+                            previous_assistant.get("columns")
+                            or list(comparison_rows[0].keys())
+                        ),
+                        "rows": previous_rows,
+                        "row_count": len(previous_rows),
+                        "model": "local",
+                        "visualization": previous_visualization,
+                    }
 
     # --------------------------------------------------------
     # FAST-PATH CONTEXTUAL EXPLANATION
@@ -4381,27 +4679,27 @@ def analyze_with_llm(
     Pipeline:
 
         User question
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Query Engine
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Forecast Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Trend Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Statistical Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Business Insight Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Grouped Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local Numeric Analysis
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Gemini SQL Generation
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         DuckDB
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Local answer formatting
-              ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“
+              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
         Visualization
     """
 
@@ -5969,6 +6267,9 @@ def _try_anomaly_query(dataset, question):
         )
 
         return None
+
+
+
 
 
 
