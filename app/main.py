@@ -1,4 +1,4 @@
-﻿import os
+import os
 import tempfile
 
 from contextlib import contextmanager
@@ -51,7 +51,7 @@ def root():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://ai-data-analyst-agent-3eb0zixx2-insight-forge-ai.vercel.app"],
+    allow_origins=["http://localhost:5173", "https://ai-data-analyst-agent-q0wlxy5sb-insight-forge-ai.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -447,6 +447,7 @@ def download_report(
             )
         }
     )
+
 
 
 
