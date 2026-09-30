@@ -92,17 +92,53 @@ export async function uploadDataset(file, onProgress) {
     // SEND REQUEST
     // --------------------------------------------------------
 
-    const response = await fetch(
-      `${BASE}/upload`,
-      {
-        method: "POST",
-        body: form,
+    console.log("UPLOAD DEBUG - API BASE:", BASE);
+    console.log("UPLOAD DEBUG - URL:", `${BASE}/upload`);
+    console.log("UPLOAD DEBUG - Browser origin:", window.location.origin);
+    console.log("UPLOAD DEBUG - File name:", file?.name);
+    console.log("UPLOAD DEBUG - File size:", file?.size);
+    console.log("UPLOAD DEBUG - File type:", file?.type);
 
-        headers: {
-          Accept: "application/json",
-        },
-      }
-    );
+    let response;
+
+    try {
+      response = await fetch(
+        `${BASE}/upload`,
+        {
+          method: "POST",
+          body: form,
+
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
+    } catch (fetchError) {
+      console.error("========================================");
+      console.error("UPLOAD FETCH FAILED");
+      console.error("Error name:", fetchError?.name);
+      console.error("Error message:", fetchError?.message);
+      console.error("Error stack:", fetchError?.stack);
+      console.error("API BASE:", BASE);
+      console.error("Upload URL:", `${BASE}/upload`);
+      console.error("Browser origin:", window.location.origin);
+      console.error("Online status:", navigator.onLine);
+      console.error("User agent:", navigator.userAgent);
+      console.error("========================================");
+
+      const diagnosticError = new Error(
+        `Network upload failed: ${fetchError?.message || "Unknown fetch error"}`
+      );
+
+      diagnosticError.name = fetchError?.name || "FetchError";
+      diagnosticError.originalError = fetchError;
+      diagnosticError.apiBase = BASE;
+      diagnosticError.uploadUrl = `${BASE}/upload`;
+      diagnosticError.browserOrigin = window.location.origin;
+      diagnosticError.online = navigator.onLine;
+
+      throw diagnosticError;
+    }
 
 
     console.log(
