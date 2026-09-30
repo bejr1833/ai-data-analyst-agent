@@ -46,7 +46,7 @@ export async function uploadDataset(file, onProgress) {
   const uploadUrl = `${uploadBase}/upload`;
 
   console.log("========================================");
-  console.log("uploadDataset() START - DIRECT RENDER");
+  console.log("uploadDataset() START - DIRECT RENDER XHR");
   console.log("File:", file?.name);
   console.log("File size:", file?.size);
   console.log("Upload URL:", uploadUrl);
@@ -54,87 +54,120 @@ export async function uploadDataset(file, onProgress) {
   console.log("Online status:", navigator.onLine);
   console.log("========================================");
 
-  const form = new FormData();
-  form.append("file", file);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
 
-  try {
+    xhr.open("POST", uploadUrl, true);
+
+    xhr.setRequestHeader("Accept", "application/json");
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      console.log("XHR response received.");
+      console.log("HTTP status:", xhr.status);
+      console.log("HTTP status text:", xhr.statusText);
+
+      let data = null;
+
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (error) {
+        console.error("Failed to parse XHR response:", error);
+      }
+
+      console.log("Server response:", data);
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const message =
+          data?.detail ||
+          xhr.statusText ||
+          "Upload failed.";
+
+        const error = new Error(`${xhr.status}: ${message}`);
+        error.status = xhr.status;
+        error.detail = message;
+
+        console.error("DIRECT RENDER XHR HTTP FAILED:", error);
+
+        reject(error);
+        return;
+      }
+
+      if (!data || !data.dataset_id) {
+        const error = new Error(
+          "Upload succeeded, but the server did not return a dataset ID."
+        );
+
+        console.error("DIRECT RENDER XHR INVALID RESPONSE:", error);
+
+        reject(error);
+        return;
+      }
+
+      if (onProgress) {
+        onProgress(100);
+      }
+
+      console.log("Dataset upload completed successfully.");
+      console.log("Dataset ID:", data.dataset_id);
+      console.log("========================================");
+      console.log("uploadDataset() SUCCESS - DIRECT RENDER XHR");
+      console.log("========================================");
+
+      resolve(data);
+    };
+
+    xhr.onerror = () => {
+      const error = new Error("Network upload failed: XMLHttpRequest");
+
+      console.error("========================================");
+      console.error("DIRECT RENDER XHR NETWORK FAILED");
+      console.error("Error:", error);
+      console.error("Message:", error.message);
+      console.error("Upload URL:", uploadUrl);
+      console.error("Browser origin:", window.location.origin);
+      console.error("Online status:", navigator.onLine);
+      console.error("User agent:", navigator.userAgent);
+      console.error("========================================");
+
+      reject(error);
+    };
+
+    xhr.ontimeout = () => {
+      const error = new Error("Upload request timed out.");
+
+      console.error("DIRECT RENDER XHR TIMEOUT");
+      console.error("Upload URL:", uploadUrl);
+
+      reject(error);
+    };
+
+    xhr.onabort = () => {
+      const error = new Error("Upload request was aborted.");
+
+      console.error("DIRECT RENDER XHR ABORTED");
+
+      reject(error);
+    };
+
+    const form = new FormData();
+    form.append("file", file);
+
     if (onProgress) {
       onProgress(10);
     }
 
-    const response = await fetch(uploadUrl, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-      },
-      body: form,
-    });
+    console.log("Sending DIRECT RENDER XHR request...");
 
-    console.log("FETCH response received.");
-    console.log("HTTP status:", response.status);
-    console.log("HTTP status text:", response.statusText);
-
-    let data;
-
-    try {
-      data = await response.json();
-    } catch (error) {
-      throw new Error(
-        `Invalid server response: ${
-          error?.message || "Unable to parse response"
-        }`
-      );
-    }
-
-    console.log("Server response:", data);
-
-    if (!response.ok) {
-      const message =
-        data?.detail ||
-        response.statusText ||
-        "Upload failed.";
-
-      const error = new Error(`${response.status}: ${message}`);
-      error.status = response.status;
-      error.detail = message;
-
-      throw error;
-    }
-
-    if (!data || !data.dataset_id) {
-      throw new Error(
-        "Upload succeeded, but the server did not return a dataset ID."
-      );
-    }
-
-    if (onProgress) {
-      onProgress(100);
-    }
-
-    console.log("Dataset upload completed successfully.");
-    console.log("Dataset ID:", data.dataset_id);
-    console.log("========================================");
-    console.log("uploadDataset() SUCCESS - DIRECT RENDER");
-    console.log("========================================");
-
-    return data;
-  } catch (error) {
-    console.error("========================================");
-    console.error("DIRECT RENDER UPLOAD FAILED");
-    console.error("Error:", error);
-    console.error("Message:", error?.message);
-    console.error("Upload URL:", uploadUrl);
-    console.error("Browser origin:", window.location.origin);
-    console.error("Online status:", navigator.onLine);
-    console.error("User agent:", navigator.userAgent);
-    console.error("========================================");
-
-    throw error instanceof Error
-      ? error
-      : new Error("Network upload failed.");
-  }
+    xhr.send(form);
+  });
 }
-
 export async function getOverview(
   datasetId
 ) {
