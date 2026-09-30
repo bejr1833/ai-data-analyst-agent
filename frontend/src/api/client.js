@@ -126,9 +126,16 @@ export async function uploadDataset(file, onProgress) {
       console.error("User agent:", navigator.userAgent);
       console.error("========================================");
 
-      const diagnosticError = new Error(
-        `Network upload failed: ${fetchError?.message || "Unknown fetch error"}`
-      );
+      const diagnosticMessage = [
+        `Network upload failed: ${fetchError?.message || "Unknown fetch error"}`,
+        `API: ${BASE}/upload`,
+        `Origin: ${window.location.origin}`,
+        `Online: ${navigator.onLine}`,
+        `Error: ${fetchError?.name || "FetchError"}`,
+        `Browser: ${navigator.userAgent}`,
+      ].join("\\n");
+
+      const diagnosticError = new Error(diagnosticMessage);
 
       diagnosticError.name = fetchError?.name || "FetchError";
       diagnosticError.originalError = fetchError;
