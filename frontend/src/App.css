@@ -11481,3 +11481,317 @@ body .app-shell header.app-header .btn-secondary {
   overflow: hidden !important;
 }
 
+
+/* ============================================================
+   MOBILE UI POLISH - FINAL TARGETED OVERRIDES
+   Desktop layout remains unchanged
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+  /* ---------- MAIN MOBILE CONTAINER ---------- */
+  .app-main {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* ---------- HEADER ACTIONS ---------- */
+  .app-header .header-actions {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 7px !important;
+  }
+
+  .app-header .header-filename {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    text-align: center !important;
+    font-size: 10px !important;
+  }
+
+  .app-header .header-actions .btn-primary,
+  .app-header .header-actions .btn-secondary {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+    white-space: nowrap !important;
+  }
+
+  /* ---------- QUICK INSIGHTS ---------- */
+  .ai-insights-panel {
+    width: 100% !important;
+    margin: 10px 0 14px !important;
+    border-radius: 13px !important;
+  }
+
+  .ai-insights-header {
+    min-height: 44px !important;
+    height: 44px !important;
+    padding: 8px 12px !important;
+  }
+
+  .ai-insights-title {
+    font-size: 13px !important;
+  }
+
+  .ai-insights-count {
+    display: none !important;
+  }
+
+  .ai-insights-chevron {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  .ai-insights-groups {
+    grid-template-columns: 1fr !important;
+    gap: 7px !important;
+    padding: 0 9px 9px !important;
+  }
+
+  .ai-insight-group {
+    padding: 8px !important;
+    border-radius: 10px !important;
+  }
+
+  .ai-insight-group-label {
+    margin-bottom: 5px !important;
+    font-size: 9px !important;
+  }
+
+  .ai-insight-questions {
+    gap: 5px !important;
+  }
+
+  .ai-insight-questions button {
+    min-height: 42px !important;
+    padding: 8px 10px !important;
+    font-size: 12px !important;
+    line-height: 1.3 !important;
+    border-radius: 8px !important;
+  }
+
+  /* ---------- GENERAL PANELS ---------- */
+  .panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-bottom: 14px !important;
+    padding: 14px !important;
+    border-radius: 15px !important;
+    box-sizing: border-box !important;
+  }
+
+  .panel-title {
+    margin-bottom: 10px !important;
+    font-size: 18px !important;
+    line-height: 1.3 !important;
+  }
+
+  /* ---------- EMPTY STATES ---------- */
+  .empty-state {
+    width: 100% !important;
+    min-height: 120px !important;
+    height: auto !important;
+    padding: 20px 14px !important;
+    border: 1px solid rgba(148, 163, 184, 0.14) !important;
+    border-radius: 13px !important;
+    background: rgba(30, 41, 59, 0.58) !important;
+    color: #dce7f8 !important;
+    box-sizing: border-box !important;
+  }
+
+  .empty-state-icon {
+    width: 36px !important;
+    height: 36px !important;
+    margin-bottom: 8px !important;
+    background: rgba(148, 163, 184, 0.10) !important;
+    color: #9eb4d2 !important;
+  }
+
+  .empty-state strong {
+    color: #e7f0fa !important;
+    font-size: 14px !important;
+  }
+
+  .empty-state p {
+    max-width: 100% !important;
+    margin-top: 6px !important;
+    color: #9eb0c6 !important;
+    font-size: 11px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* ---------- CHART GRID ---------- */
+  .chart-grid {
+    width: 100% !important;
+    min-width: 0 !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 10px !important;
+  }
+
+  .chart-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 10px !important;
+    border-radius: 12px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  /* ---------- CORRELATION MATRIX ---------- */
+  .correlation-map-wrapper {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-top: 14px !important;
+    padding: 14px !important;
+    border-radius: 15px !important;
+    box-sizing: border-box !important;
+  }
+
+  .correlation-map-header {
+    gap: 10px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .correlation-map-eyebrow {
+    margin-bottom: 5px !important;
+    font-size: 9px !important;
+  }
+
+  .correlation-map-header h2 {
+    font-size: 18px !important;
+    line-height: 1.2 !important;
+  }
+
+  .correlation-map-header p {
+    margin-top: 4px !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+
+  .correlation-map-status {
+    padding: 6px 9px !important;
+    font-size: 10px !important;
+  }
+
+  .correlation-map-scroll {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  .correlation-grid {
+    min-width: 680px !important;
+  }
+
+  .correlation-empty {
+    min-height: 150px !important;
+    padding: 20px 14px !important;
+    border-radius: 11px !important;
+  }
+
+  .correlation-empty-title {
+    font-size: 13px !important;
+  }
+
+  .correlation-empty-text {
+    font-size: 11px !important;
+    line-height: 1.5 !important;
+  }
+
+  .correlation-legend {
+    gap: 10px !important;
+    margin-top: 12px !important;
+    font-size: 10px !important;
+  }
+
+  /* ---------- DATA TABLES ---------- */
+  .table-container,
+  .data-table-container,
+  .column-table,
+  .data-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* ---------- AI ANALYST ---------- */
+  .dashboard-ai-section,
+  .ai-analyst {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .ai-analyst {
+    margin: 10px 0 !important;
+    padding: 14px !important;
+    border-radius: 15px !important;
+  }
+
+  .ai-analyst-form {
+    margin: 10px 0 14px !important;
+    padding: 7px !important;
+    gap: 7px !important;
+  }
+
+  .ai-analyst-form input {
+    min-height: 44px !important;
+    font-size: 16px !important;
+  }
+
+  .ai-analyst-form button {
+    min-height: 44px !important;
+  }
+
+  /* ---------- TOUCH TARGETS ---------- */
+  button,
+  a.btn-primary,
+  a.btn-secondary {
+    touch-action: manipulation;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-header {
+    padding: 8px 10px !important;
+  }
+
+  .app-header .header-actions .btn-primary,
+  .app-header .header-actions .btn-secondary {
+    min-height: 38px !important;
+    padding: 7px 8px !important;
+    font-size: 10px !important;
+  }
+
+  .app-main {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .panel {
+    padding: 12px !important;
+  }
+
+  .correlation-map-wrapper {
+    padding: 12px !important;
+  }
+}
