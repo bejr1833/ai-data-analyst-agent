@@ -1274,10 +1274,16 @@ function ScatterChart({ rows, x, y, visualization }) {
   const yPos = (value) =>
     top + ((yMax - value) / yRange) * chartHeight;
 
-  const correlation = pearsonCorrelation(
-    xValues,
-    yValues
+  // Prefer the authoritative full-dataset correlation returned
+  // by the backend. Fall back to the sampled chart points only
+  // when the backend value is unavailable.
+  const backendCorrelation = Number(
+    visualization?.correlation
   );
+
+  const correlation = Number.isFinite(backendCorrelation)
+    ? backendCorrelation
+    : pearsonCorrelation(xValues, yValues);
 
   return (
     <ChartFrame

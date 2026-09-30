@@ -230,8 +230,18 @@ class AnalystAgent:
                 "Find a business ranking/insight",
             )]
 
-        if (
+        # Grouped analytical questions must take priority over
+        # generic numeric aggregation. Support natural-language forms
+        # such as "by region", "region wise", "region-wise",
+        # "for each region", "per region", and "across regions".
+        grouped_intent = (
             " by " in q
+            or " wise" in q
+            or "wise" in q
+            or "-wise" in q
+            or " for each " in q
+            or " per " in q
+            or " across " in q
             or (
                 "compare" in q
                 and " between " in q
@@ -240,11 +250,18 @@ class AnalystAgent:
             or self._contains_any(
                 q,
                 [
-                    "per region", "per product", "per category",
-                    "per month", "per year", "per customer", "grouped",
+                    "per region",
+                    "per product",
+                    "per category",
+                    "per month",
+                    "per year",
+                    "per customer",
+                    "grouped",
                 ],
             )
-        ):
+        )
+
+        if grouped_intent:
             return [AgentStep(
                 "grouped_analysis",
                 "Group a metric by a dimension",

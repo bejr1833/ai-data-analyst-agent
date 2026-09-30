@@ -1547,9 +1547,19 @@ def _try_grouped_query(
             ]
             comparison_mode = True
 
-    # Normal grouped questions require "by".
+    # Normal grouped questions can use:
+    # "by", "wise", "for each", "per", or "across".
     # Comparison questions use "between X and Y" or "of X and Y".
-    if " by " not in q and not comparison_mode:
+    grouped_intent = (
+        " by " in q
+        or " wise" in q
+        or "wise" in q
+        or " for each " in q
+        or " per " in q
+        or " across " in q
+    )
+
+    if not grouped_intent and not comparison_mode:
         return None
 
     # --------------------------------------------------------
@@ -1599,10 +1609,21 @@ def _try_grouped_query(
         for column in columns:
 
             column_lower = column.lower()
+            column_readable = column_lower.replace("_", " ")
 
             if (
                 f"by {column_lower}" in q
-                or f"by {column_lower.replace('_', ' ')}" in q
+                or f"by {column_readable}" in q
+                or f"{column_lower} wise" in q
+                or f"{column_readable} wise" in q
+                or f"{column_lower}-wise" in q
+                or f"{column_readable}-wise" in q
+                or f"for each {column_lower}" in q
+                or f"for each {column_readable}" in q
+                or f"per {column_lower}" in q
+                or f"per {column_readable}" in q
+                or f"across {column_lower}" in q
+                or f"across {column_readable}" in q
             ):
                 group_column = column
                 break
@@ -2368,7 +2389,7 @@ def _try_numeric_query(
     print("BUSINESS NORMALIZED:", q)
 
     # --------------------------------------------------------
-    # STEP 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Determine operation
+    # STEP 1 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Determine operation
     # --------------------------------------------------------
 
     if (
@@ -2410,7 +2431,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Get actual dataset columns
+    # STEP 2 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Get actual dataset columns
     # --------------------------------------------------------
 
     schema_rows = dataset.con.execute(
@@ -2428,7 +2449,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Find column
+    # STEP 3 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Find column
     # --------------------------------------------------------
 
     selected_column = None
@@ -2611,7 +2632,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Safely quote column
+    # STEP 4 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Safely quote column
     # --------------------------------------------------------
 
     quoted_column = (
@@ -2624,7 +2645,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Build SQL
+    # STEP 5 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Build SQL
     # --------------------------------------------------------
 
     if operation == "COUNT":
@@ -2649,7 +2670,7 @@ def _try_numeric_query(
         """
 
     # --------------------------------------------------------
-    # STEP 6 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Execute locally
+    # STEP 6 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Execute locally
     # --------------------------------------------------------
 
     try:
@@ -2677,7 +2698,7 @@ def _try_numeric_query(
         return None
 
     # --------------------------------------------------------
-    # STEP 7 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Format answer
+    # STEP 7 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Format answer
     # --------------------------------------------------------
 
     operation_names = {
@@ -2703,7 +2724,7 @@ def _try_numeric_query(
     )
 
     # --------------------------------------------------------
-    # STEP 8 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Return local result
+    # STEP 8 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Return local result
     # --------------------------------------------------------
 
     return {
@@ -2734,10 +2755,7 @@ def _try_trend_query(dataset, question: str) -> dict | None:
     """
     Handle time-series trend questions locally using DuckDB.
 
-    Examples:
-        Show revenue trend over time
-        Show sales trend
-        Revenue trend by date
+    Supports daily, weekly, monthly, and yearly aggregation.
     """
 
     q = question.lower().strip()
@@ -2752,16 +2770,21 @@ def _try_trend_query(dataset, question: str) -> dict | None:
         "historical trend",
         "change over time",
         "growth over time",
+        "daily",
         "daily trend",
+        "weekly",
         "weekly trend",
+        "monthly",
         "monthly trend",
+        "yearly",
         "yearly trend",
+        "annual",
+        "annual trend",
     ]
 
     if not any(keyword in q for keyword in trend_keywords):
         return None
 
-    # Get dataset schema.
     try:
         schema_rows = dataset.con.execute(
             """
@@ -2780,11 +2803,15 @@ def _try_trend_query(dataset, question: str) -> dict | None:
 
     columns = [row[0] for row in schema_rows]
 
-    # Find a date/time column.
+    # --------------------------------------------------------
+    # Find date/time column
+    # --------------------------------------------------------
+
     date_column = None
 
     for column_name, data_type in schema_rows:
         dtype = str(data_type).upper()
+
         if (
             "DATE" in dtype
             or "TIMESTAMP" in dtype
@@ -2794,51 +2821,76 @@ def _try_trend_query(dataset, question: str) -> dict | None:
             break
 
     if date_column is None:
-        for candidate in ["date", "datetime", "timestamp", "time", "day"]:
+        for candidate in [
+            "date",
+            "datetime",
+            "timestamp",
+            "time",
+            "day",
+        ]:
             for column in columns:
                 if column.lower() == candidate:
                     date_column = column
                     break
+
             if date_column:
                 break
 
     if date_column is None:
         return None
 
-    # Detect the requested metric.
+    # --------------------------------------------------------
+    # Detect metric
+    # --------------------------------------------------------
+
     metric_aliases = {
         "revenue": [
-            "revenue", "sales", "sale", "income", "earnings"
+            "revenue",
+            "sales",
+            "sale",
+            "income",
+            "earnings",
         ],
         "units_sold": [
-            "units_sold", "units", "quantity", "qty"
+            "units_sold",
+            "units",
+            "quantity",
+            "qty",
         ],
         "unit_price": [
-            "unit_price", "price"
+            "unit_price",
+            "price",
         ],
         "marketing_spend": [
-            "marketing_spend", "marketing", "marketing cost"
+            "marketing_spend",
+            "marketing",
+            "marketing cost",
         ],
         "customer_rating": [
-            "customer_rating", "rating"
+            "customer_rating",
+            "rating",
         ],
         "returns": [
-            "returns", "return"
+            "returns",
+            "return",
         ],
     }
 
     metric_column = None
 
     for metric_name, aliases in metric_aliases.items():
-        if metric_name in q or any(alias in q for alias in aliases):
+
+        if metric_name in q or any(
+            alias in q for alias in aliases
+        ):
             for column in columns:
                 if column.lower() in aliases:
                     metric_column = column
                     break
+
         if metric_column:
             break
 
-    # Default to revenue when the user says "trend" without another metric.
     if metric_column is None:
         for column in columns:
             if column.lower() == "revenue":
@@ -2851,20 +2903,81 @@ def _try_trend_query(dataset, question: str) -> dict | None:
     safe_date = date_column.replace('"', '""')
     safe_metric = metric_column.replace('"', '""')
 
+    # --------------------------------------------------------
+    # Detect time grain
+    # --------------------------------------------------------
+
+    if (
+        "monthly" in q
+        or "month" in q
+        or "by month" in q
+        or "month-wise" in q
+        or "month wise" in q
+    ):
+        grain = "month"
+        bucket_expression = (
+            f"CAST(date_trunc('month', "
+            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        )
+        grain_label = "month"
+
+    elif (
+        "weekly" in q
+        or "week" in q
+        or "by week" in q
+        or "week-wise" in q
+        or "week wise" in q
+    ):
+        grain = "week"
+        bucket_expression = (
+            f"CAST(date_trunc('week', "
+            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        )
+        grain_label = "week"
+
+    elif (
+        "yearly" in q
+        or "annual" in q
+        or "year" in q
+        or "by year" in q
+        or "year-wise" in q
+        or "year wise" in q
+    ):
+        grain = "year"
+        bucket_expression = (
+            f"CAST(date_trunc('year', "
+            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        )
+        grain_label = "year"
+
+    else:
+        grain = "day"
+        bucket_expression = (
+            f'TRY_CAST("{safe_date}" AS DATE)'
+        )
+        grain_label = "date"
+
+    # --------------------------------------------------------
+    # Build aggregated SQL
+    # --------------------------------------------------------
+
     sql = f"""
         SELECT
-            TRY_CAST("{safe_date}" AS DATE) AS "date",
+            {bucket_expression} AS "date",
             SUM(
                 TRY_CAST("{safe_metric}" AS DOUBLE)
             ) AS "{safe_metric}"
         FROM main_table
         WHERE TRY_CAST("{safe_date}" AS DATE) IS NOT NULL
-        GROUP BY TRY_CAST("{safe_date}" AS DATE)
-        ORDER BY TRY_CAST("{safe_date}" AS DATE) ASC
+        GROUP BY {bucket_expression}
+        ORDER BY {bucket_expression} ASC
     """.strip()
 
     try:
-        result_columns, result_rows = _execute_sql(dataset, sql)
+        result_columns, result_rows = _execute_sql(
+            dataset,
+            sql,
+        )
     except Exception as exc:
         print("Trend query failed:", repr(exc))
         return None
@@ -2872,27 +2985,35 @@ def _try_trend_query(dataset, question: str) -> dict | None:
     if not result_rows:
         return None
 
-    serialized_rows = _serialize_rows(result_columns, result_rows)
+    serialized_rows = _serialize_rows(
+        result_columns,
+        result_rows,
+    )
 
-    # The first result column is always normalized to "date".
-    # The second is the selected metric.
     metric_result_column = result_columns[1]
 
     answer_items = []
+
     for row in serialized_rows[:10]:
         date_value = row.get("date")
-        metric_value = row.get(metric_result_column)
+        metric_value = row.get(
+            metric_result_column
+        )
+
         answer_items.append(
             f"{date_value}: {_display_value(metric_value)}"
         )
 
     answer = (
-        "Here are the results by date: "
+        f"Here are the results by {grain_label}: "
         + ", ".join(answer_items)
     )
 
     if len(serialized_rows) > 10:
-        answer += f", and {len(serialized_rows) - 10:,} more results."
+        answer += (
+            f", and {len(serialized_rows) - 10:,} "
+            "more results."
+        )
 
     visualization = {
         "type": "line",
@@ -2900,7 +3021,7 @@ def _try_trend_query(dataset, question: str) -> dict | None:
         "y": metric_result_column,
         "title": (
             f"{metric_result_column.replace('_', ' ').title()} "
-            "Trend Over Time"
+            f"{grain_label.title()} Trend"
         ),
     }
 
@@ -4679,27 +4800,27 @@ def analyze_with_llm(
     Pipeline:
 
         User question
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Query Engine
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Forecast Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Trend Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Statistical Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Business Insight Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Grouped Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local Numeric Analysis
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Gemini SQL Generation
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         DuckDB
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Local answer formatting
-              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
         Visualization
     """
 
@@ -4934,43 +5055,6 @@ def analyze_with_llm(
     # Try business insight analysis
     # --------------------------------------------------------
     # STEP 5
-    # Try business insight analysis
-    # --------------------------------------------------------
-
-    insight_start = time.time()
-
-    insight_result = _try_business_insight_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Business insight:",
-        round(
-            time.time() - insight_start,
-            3,
-        ),
-        "seconds",
-    )
-
-    if insight_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
-            ),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL BUSINESS INSIGHT")
-        print("==============================\n")
-
-        return insight_result
-
-    # --------------------------------------------------------
-    # STEP 6
     # Try local grouped analysis
     # --------------------------------------------------------
 
@@ -5005,6 +5089,43 @@ def analyze_with_llm(
         print("==============================\n")
 
         return grouped_result
+
+    # --------------------------------------------------------
+    # STEP 6
+    # Try business insight analysis
+    # --------------------------------------------------------
+
+    insight_start = time.time()
+
+    insight_result = _try_business_insight_query(
+        dataset,
+        question,
+    )
+
+    print(
+        "Business insight:",
+        round(
+            time.time() - insight_start,
+            3,
+        ),
+        "seconds",
+    )
+
+    if insight_result is not None:
+
+        print(
+            "TOTAL:",
+            round(
+                time.time() - total_start,
+                3,
+            ),
+            "seconds",
+        )
+
+        print("RESULT: LOCAL BUSINESS INSIGHT")
+        print("==============================\n")
+
+        return insight_result
 
     # --------------------------------------------------------
     # STEP 7
@@ -5371,6 +5492,7 @@ LIMIT 1000
                 "x": col1,
                 "y": col2,
                 "title": f"{col1} vs {col2}",
+                "correlation": correlation,
             },
         }
 
@@ -6267,34 +6389,3 @@ def _try_anomaly_query(dataset, question):
         )
 
         return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
