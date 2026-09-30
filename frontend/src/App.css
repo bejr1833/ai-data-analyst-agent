@@ -12248,3 +12248,343 @@ body .app-shell header.app-header .btn-secondary {
     height: 27px !important;
   }
 }
+
+/* ============================================================
+   FINAL MOBILE COMPACT LAYOUT
+   ASK BOX + DATASET PROFILE
+   Desktop layout remains unchanged.
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+  /* ==========================================================
+     AI ANALYST - COMPACT ASK CONTROL
+     ========================================================== */
+
+  body .app-shell section.ai-analyst .ai-analyst-bottom-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 8px !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+
+    height: 46px !important;
+    min-height: 46px !important;
+    max-height: 46px !important;
+
+    margin: 6px 0 4px !important;
+    padding: 3px !important;
+    gap: 4px !important;
+
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+
+    border: 1px solid rgba(69, 217, 255, 0.48) !important;
+    border-radius: 12px !important;
+
+    background:
+      linear-gradient(
+        135deg,
+        rgba(26, 66, 91, 0.98),
+        rgba(20, 43, 70, 0.98)
+      ) !important;
+
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.06),
+      0 4px 14px rgba(0,0,0,.18),
+      0 0 14px rgba(69,217,255,.08) !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form input {
+    display: block !important;
+
+    flex: 1 1 auto !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: none !important;
+
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+
+    margin: 0 !important;
+    padding: 7px 9px !important;
+
+    box-sizing: border-box !important;
+
+    border: 0 !important;
+    outline: none !important;
+
+    background: transparent !important;
+    color: #edf8ff !important;
+
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form input::placeholder {
+    color: #a9bfd2 !important;
+    opacity: 1 !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form button {
+    display: flex !important;
+    flex: 0 0 58px !important;
+
+    width: 58px !important;
+    min-width: 58px !important;
+    max-width: 58px !important;
+
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    align-items: center !important;
+    justify-content: center !important;
+
+    box-sizing: border-box !important;
+
+    border: 1px solid rgba(69,217,255,.52) !important;
+    border-radius: 9px !important;
+
+    color: #071521 !important;
+
+    background:
+      linear-gradient(
+        135deg,
+        #45d9ff,
+        #5b8cff
+      ) !important;
+
+    font-size: 11px !important;
+    font-weight: 800 !important;
+
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  /* Keep the Ask button visible even when the input is empty. */
+  body .app-shell section.ai-analyst form.ai-analyst-form button:disabled {
+    opacity: 1 !important;
+    visibility: visible !important;
+
+    color: rgba(7,21,33,.78) !important;
+
+    background:
+      linear-gradient(
+        135deg,
+        rgba(69,217,255,.74),
+        rgba(91,140,255,.74)
+      ) !important;
+
+    border-color: rgba(69,217,255,.34) !important;
+  }
+
+
+  /* ==========================================================
+     DATASET OVERVIEW
+     Make the metric card substantially shorter.
+     ========================================================== */
+
+  body .app-shell .metrics-section {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 10px 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  body .app-shell .metrics-section-header {
+    margin: 0 0 8px !important;
+    padding: 0 !important;
+    gap: 4px !important;
+  }
+
+  body .app-shell .metrics-eyebrow {
+    font-size: 11px !important;
+    line-height: 1.15 !important;
+    letter-spacing: .08em !important;
+    margin-bottom: 3px !important;
+  }
+
+  body .app-shell .metrics-title {
+    margin: 0 !important;
+    font-size: 25px !important;
+    line-height: 1.1 !important;
+  }
+
+  body .app-shell .metrics-status {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    margin-top: 4px !important;
+  }
+
+  body .app-shell .metrics-grid {
+    width: 100% !important;
+    max-width: 100% !important;
+
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    box-sizing: border-box !important;
+
+    overflow: hidden !important;
+
+    border-radius: 13px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-cell {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    height: 92px !important;
+
+    padding: 10px 11px !important;
+
+    box-sizing: border-box !important;
+
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+
+    overflow: hidden !important;
+  }
+
+  body .app-shell .metrics-grid .metric-icon {
+    flex: 0 0 auto !important;
+
+    width: 20px !important;
+    min-width: 20px !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    font-size: 14px !important;
+    line-height: 20px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-content {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body .app-shell .metrics-grid .metric-value {
+    margin: 0 !important;
+    padding: 0 !important;
+
+    font-size: 22px !important;
+    line-height: 1.05 !important;
+    font-weight: 750 !important;
+
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  body .app-shell .metrics-grid .metric-label {
+    margin-top: 4px !important;
+    padding: 0 !important;
+
+    font-size: 10px !important;
+    line-height: 1.15 !important;
+
+    white-space: normal !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  /* Prevent the missing-cell percentage from making its cell wide. */
+  body .app-shell .metrics-grid .metric-cell-green .metric-value {
+    font-size: 19px !important;
+  }
+}
+
+
+/* ============================================================
+   EXTRA SMALL PHONES
+   ============================================================ */
+
+@media (max-width: 420px) {
+
+  body .app-shell section.ai-analyst form.ai-analyst-form {
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form input {
+    height: 36px !important;
+    min-height: 36px !important;
+    font-size: 11px !important;
+    padding: 6px 8px !important;
+  }
+
+  body .app-shell section.ai-analyst form.ai-analyst-form button {
+    flex-basis: 55px !important;
+    width: 55px !important;
+    min-width: 55px !important;
+    max-width: 55px !important;
+
+    height: 36px !important;
+    min-height: 36px !important;
+
+    font-size: 10px !important;
+  }
+
+  body .app-shell .metrics-section {
+    margin-top: 8px !important;
+  }
+
+  body .app-shell .metrics-title {
+    font-size: 23px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-cell {
+    height: 84px !important;
+    padding: 8px 9px !important;
+    gap: 6px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-icon {
+    width: 17px !important;
+    min-width: 17px !important;
+    font-size: 12px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-value {
+    font-size: 19px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-cell-green .metric-value {
+    font-size: 17px !important;
+  }
+
+  body .app-shell .metrics-grid .metric-label {
+    font-size: 9px !important;
+    margin-top: 3px !important;
+  }
+}
