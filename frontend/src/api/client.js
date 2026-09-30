@@ -39,12 +39,17 @@ export async function uploadDataset(file, onProgress) {
     throw new Error("Please select a file.");
   }
 
+  const uploadBase =
+    import.meta.env.VITE_UPLOAD_API_BASE_URL ||
+    "https://ai-data-analyst-agent-dmxy.onrender.com/api";
+
+  const uploadUrl = `${uploadBase}/upload`;
+
   console.log("========================================");
-  console.log("uploadDataset() START - FETCH");
+  console.log("uploadDataset() START - DIRECT RENDER");
   console.log("File:", file?.name);
   console.log("File size:", file?.size);
-  console.log("API BASE:", BASE);
-  console.log("Upload URL:", `${BASE}/upload`);
+  console.log("Upload URL:", uploadUrl);
   console.log("Browser origin:", window.location.origin);
   console.log("Online status:", navigator.onLine);
   console.log("========================================");
@@ -57,7 +62,7 @@ export async function uploadDataset(file, onProgress) {
       onProgress(10);
     }
 
-    const response = await fetch(`${BASE}/upload`, {
+    const response = await fetch(uploadUrl, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -89,7 +94,11 @@ export async function uploadDataset(file, onProgress) {
         response.statusText ||
         "Upload failed.";
 
-      throw new Error(`${response.status}: ${message}`);
+      const error = new Error(`${response.status}: ${message}`);
+      error.status = response.status;
+      error.detail = message;
+
+      throw error;
     }
 
     if (!data || !data.dataset_id) {
@@ -105,16 +114,16 @@ export async function uploadDataset(file, onProgress) {
     console.log("Dataset upload completed successfully.");
     console.log("Dataset ID:", data.dataset_id);
     console.log("========================================");
-    console.log("uploadDataset() SUCCESS - FETCH");
+    console.log("uploadDataset() SUCCESS - DIRECT RENDER");
     console.log("========================================");
 
     return data;
   } catch (error) {
     console.error("========================================");
-    console.error("FETCH UPLOAD FAILED");
+    console.error("DIRECT RENDER UPLOAD FAILED");
     console.error("Error:", error);
-    console.error("API BASE:", BASE);
-    console.error("Upload URL:", `${BASE}/upload`);
+    console.error("Message:", error?.message);
+    console.error("Upload URL:", uploadUrl);
     console.error("Browser origin:", window.location.origin);
     console.error("Online status:", navigator.onLine);
     console.error("User agent:", navigator.userAgent);
@@ -125,6 +134,7 @@ export async function uploadDataset(file, onProgress) {
       : new Error("Network upload failed.");
   }
 }
+
 export async function getOverview(
   datasetId
 ) {
