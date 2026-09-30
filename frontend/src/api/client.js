@@ -1,4 +1,4 @@
-﻿const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 
 
 /* ============================================================
@@ -34,126 +34,96 @@ async function handle(res) {
    UPLOAD DATASET
    ============================================================ */
 
-export function uploadDataset(file, onProgress) {
-  return new Promise((resolve, reject) => {
-    if (!file) {
-      reject(new Error("Please select a file."));
-      return;
+export async function uploadDataset(file, onProgress) {
+  if (!file) {
+    throw new Error("Please select a file.");
+  }
+
+  console.log("========================================");
+  console.log("uploadDataset() START - FETCH");
+  console.log("File:", file?.name);
+  console.log("File size:", file?.size);
+  console.log("API BASE:", BASE);
+  console.log("Upload URL:", `${BASE}/upload`);
+  console.log("Browser origin:", window.location.origin);
+  console.log("Online status:", navigator.onLine);
+  console.log("========================================");
+
+  const form = new FormData();
+  form.append("file", file);
+
+  try {
+    if (onProgress) {
+      onProgress(10);
     }
 
+    const response = await fetch(`${BASE}/upload`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+      body: form,
+    });
+
+    console.log("FETCH response received.");
+    console.log("HTTP status:", response.status);
+    console.log("HTTP status text:", response.statusText);
+
+    let data;
+
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new Error(
+        `Invalid server response: ${
+          error?.message || "Unable to parse response"
+        }`
+      );
+    }
+
+    console.log("Server response:", data);
+
+    if (!response.ok) {
+      const message =
+        data?.detail ||
+        response.statusText ||
+        "Upload failed.";
+
+      throw new Error(`${response.status}: ${message}`);
+    }
+
+    if (!data || !data.dataset_id) {
+      throw new Error(
+        "Upload succeeded, but the server did not return a dataset ID."
+      );
+    }
+
+    if (onProgress) {
+      onProgress(100);
+    }
+
+    console.log("Dataset upload completed successfully.");
+    console.log("Dataset ID:", data.dataset_id);
     console.log("========================================");
-    console.log("uploadDataset() START - XHR");
-    console.log("File:", file?.name);
-    console.log("File size:", file?.size);
-    console.log("API BASE:", BASE);
-    console.log("Upload URL:", `${BASE}/upload`);
-    console.log("Browser origin:", window.location.origin);
-    console.log("Online status:", navigator.onLine);
+    console.log("uploadDataset() SUCCESS - FETCH");
     console.log("========================================");
 
-    const form = new FormData();
-    form.append("file", file);
+    return data;
+  } catch (error) {
+    console.error("========================================");
+    console.error("FETCH UPLOAD FAILED");
+    console.error("Error:", error);
+    console.error("API BASE:", BASE);
+    console.error("Upload URL:", `${BASE}/upload`);
+    console.error("Browser origin:", window.location.origin);
+    console.error("Online status:", navigator.onLine);
+    console.error("User agent:", navigator.userAgent);
+    console.error("========================================");
 
-    const xhr = new XMLHttpRequest();
-
-    xhr.open("POST", `${BASE}/upload`, true);
-    xhr.setRequestHeader("Accept", "application/json");
-
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) {
-        const percent = Math.round((event.loaded / event.total) * 100);
-        onProgress(Math.min(percent, 100));
-      }
-    };
-
-    xhr.onload = () => {
-      console.log("XHR response received.");
-      console.log("HTTP status:", xhr.status);
-      console.log("HTTP status text:", xhr.statusText);
-
-      if (xhr.status < 200 || xhr.status >= 300) {
-        let message = xhr.statusText || "Upload failed.";
-
-        try {
-          const data = JSON.parse(xhr.responseText);
-          message = data?.detail || message;
-        } catch {}
-
-        reject(new Error(`${xhr.status}: ${message}`));
-        return;
-      }
-
-      try {
-        const data = JSON.parse(xhr.responseText);
-
-        console.log("Server response:", data);
-
-        if (!data || !data.dataset_id) {
-          reject(
-            new Error(
-              "Upload succeeded, but the server did not return a dataset ID."
-            )
-          );
-          return;
-        }
-
-        if (onProgress) {
-          onProgress(100);
-        }
-
-        console.log("Dataset upload completed successfully.");
-        console.log("Dataset ID:", data.dataset_id);
-        console.log("========================================");
-        console.log("uploadDataset() SUCCESS - XHR");
-        console.log("========================================");
-
-        resolve(data);
-      } catch (error) {
-        reject(
-          new Error(
-            `Invalid server response: ${
-              error?.message || "Unable to parse response"
-            }`
-          )
-        );
-      }
-    };
-
-    xhr.onerror = () => {
-      console.error("========================================");
-      console.error("XHR UPLOAD FAILED");
-      console.error("Error type: Network error");
-      console.error("API BASE:", BASE);
-      console.error("Upload URL:", `${BASE}/upload`);
-      console.error("Browser origin:", window.location.origin);
-      console.error("Online status:", navigator.onLine);
-      console.error("User agent:", navigator.userAgent);
-      console.error("========================================");
-
-      const message = [
-        "Network upload failed: XMLHttpRequest network error",
-        `API: ${BASE}/upload`,
-        `Origin: ${window.location.origin}`,
-        `Online: ${navigator.onLine}`,
-        "Error: XMLHttpRequest network error",
-        `Browser: ${navigator.userAgent}`,
-      ].join("\n");
-
-      reject(new Error(message));
-    };
-
-    xhr.onabort = () => {
-      reject(new Error("Upload was cancelled."));
-    };
-
-    xhr.ontimeout = () => {
-      reject(new Error("Upload timed out. Please try again."));
-    };
-
-    xhr.timeout = 120000;
-
-    xhr.send(form);
-  });
+    throw error instanceof Error
+      ? error
+      : new Error("Network upload failed.");
+  }
 }
 export async function getOverview(
   datasetId
@@ -306,5 +276,4 @@ export function reportUrl(
 
   return `${BASE}/datasets/${datasetId}/report.pdf`;
 }
-
 
