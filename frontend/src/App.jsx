@@ -450,17 +450,27 @@ export default function App() {
 
       <header className="app-header">
 
-        <div className="brand">
+        <div className="brand-lockup">
 
-          <span className="brand-mark">
-            ◆
-          </span>
+  <img
+    className="brand-lockup-logo"
+    src="/alta-scientia-logo.svg"
+    alt="Alta Scientia AI"
+  />
 
-          <span className="brand-name">
-            Analyst Bench
-          </span>
+  <div className="brand-lockup-copy">
 
-        </div>
+    <span className="brand-lockup-name">
+      ALTA SCIENTIA AI
+    </span>
+
+    <span className="brand-lockup-tagline">
+      Where Data Meets Its World
+    </span>
+
+  </div>
+
+</div>
 
 
         {/* ====================================================
@@ -510,42 +520,161 @@ export default function App() {
             UPLOAD SCREEN
         ===================================================== */}
 
-        {phase !== "ready" ? (
+        {phase !== "ready" ? (          <div className="intro">
 
-          <div className="intro">
+  <div className="hero-eyebrow">
+    AI-POWERED DATA ANALYTICS
+  </div>
 
-            <h1 className="intro-title">
+  <h1 className="intro-title">
+    Turn Large Datasets
+    <br />
+    Into Clear Decisions
+  </h1>
 
-              Point it at a dataset.
+  <p className="intro-sub">
+    Upload your data. Ask questions in natural language.
+    Alta Scientia AI profiles, analyzes, visualizes,
+    and explains your data without requiring you
+    to write SQL.
+  </p>
 
-              <br />
+  <div className="hero-capability-line">
+    <span>Upload</span>
+    <i>-&gt;</i>
+    <span>Profile</span>
+    <i>-&gt;</i>
+    <span>Ask</span>
+    <i>-&gt;</i>
+    <span>Analyze</span>
+    <i>-&gt;</i>
+    <span>Visualize</span>
+    <i>-&gt;</i>
+    <span>Discover</span>
+  </div>
 
-              Get the shape of it back.
+  <div className="analysis-orbit">
 
-            </h1>
+    <div className="orbit-feature orbit-feature-left orbit-feature-top">
+      <div className="orbit-feature-icon">
+        DATA
+      </div>
 
+      <div>
+        <span className="orbit-feature-label">
+          DATA ENGINE
+        </span>
 
-            <p className="intro-sub">
+        <h3>
+          Large Dataset Analysis
+        </h3>
 
-              Upload a CSV, TSV, Parquet,
-              or Excel file. Aggregate
-              statistics run directly
-              against the file on disk,
-              so multi-million-row datasets
-              profile without loading fully
-              into memory.
+        <p>
+          Work with CSV, TSV, Parquet, and Excel
+          datasets efficiently.
+        </p>
+      </div>
+    </div>
 
-            </p>
+    <div className="orbit-feature orbit-feature-right orbit-feature-top">
+      <div className="orbit-feature-icon">
+        ASK
+      </div>
 
+      <div>
+        <span className="orbit-feature-label">
+          NATURAL LANGUAGE
+        </span>
 
-            <FileUpload
-              onFile={handleFile}
-              busy={phase === "busy"}
-              progress={progress}
-              error={error}
-            />
+        <h3>
+          Ask Without SQL
+        </h3>
 
-          </div>
+        <p>
+          Ask questions about your data using
+          natural language.
+        </p>
+      </div>
+    </div>
+
+    <div className="orbit-center">
+
+      <div className="orbit-center-line" />
+
+      <div className="upload-section-heading">
+        <span className="upload-section-label">
+          START YOUR ANALYSIS
+        </span>
+
+        <span className="upload-section-text">
+          Upload a dataset to begin
+        </span>
+      </div>
+
+      <FileUpload
+        onFile={handleFile}
+        busy={phase === "busy"}
+        progress={progress}
+        error={error}
+      />
+
+    </div>
+
+    <div className="orbit-feature orbit-feature-left orbit-feature-bottom">
+      <div className="orbit-feature-icon">
+        INSIGHT
+      </div>
+
+      <div>
+        <span className="orbit-feature-label">
+          QUICK INSIGHTS
+        </span>
+
+        <h3>
+          Discover Key Findings
+        </h3>
+
+        <p>
+          Surface important patterns, trends,
+          and findings automatically.
+        </p>
+      </div>
+    </div>
+
+    <div className="orbit-feature orbit-feature-right orbit-feature-bottom">
+      <div className="orbit-feature-icon">
+        ANALYZE
+      </div>
+
+      <div>
+        <span className="orbit-feature-label">
+          VISUAL ANALYTICS
+        </span>
+
+        <h3>
+          Explore Your Data
+        </h3>
+
+        <p>
+          Analyze trends, correlations, statistics,
+          and visualizations.
+        </p>
+      </div>
+    </div>
+
+  </div>
+
+  <div className="landing-capability-strip">
+
+    <span>Trends</span>
+    <span>Correlations</span>
+    <span>Grouped Analysis</span>
+    <span>Statistics</span>
+    <span>Visualizations</span>
+
+  </div>
+
+</div>
 
         ) : (
 
@@ -717,6 +846,11 @@ export default function App() {
   );
 
 }
+
+
+
+
+
 
 
 

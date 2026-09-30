@@ -1,0 +1,37 @@
+﻿<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="altaGradient" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45D9FF"/>
+      <stop offset="0.5" stop-color="#6F9BFF"/>
+      <stop offset="1" stop-color="#A879FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect
+    x="4"
+    y="4"
+    width="56"
+    height="56"
+    rx="16"
+    fill="#0B1728"
+    stroke="url(#altaGradient)"
+    stroke-width="2"
+  />
+
+  <path
+    d="M32 13L48 43H41.5L37.7 35.7H26.3L22.5 43H16L32 13Z"
+    fill="url(#altaGradient)"
+  />
+
+  <path
+    d="M29.2 30.2H34.8L32 24.8L29.2 30.2Z"
+    fill="#07111F"
+  />
+
+  <circle
+    cx="32"
+    cy="48"
+    r="3"
+    fill="#35D39A"
+  />
+</svg>

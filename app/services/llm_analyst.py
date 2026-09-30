@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 import numbers
 from typing import Any
@@ -3162,7 +3162,7 @@ def _try_main_insight_query(
             return None
 
         answer = "Main insights from the dataset:\n\n" + "\n".join(
-            f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {insight}"
+            f"- {insight}"
             for insight in insights
         )
 

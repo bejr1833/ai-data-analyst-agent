@@ -279,81 +279,34 @@ function cleanDisplayText(value) {
 
   let text = String(value);
 
-  /*
-   * Repair common UTF-8 -> Windows-1252 mojibake.
-   *
-   * Examples:
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  -> -
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ  -> -
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦  -> ...
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“  -> "
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â -> "
-   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢  -> '
-   * ÃƒÆ’Ã¢â‚¬Å¡    -> removed
-   * ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©  -> ÃƒÆ’Ã‚Â©
-   */
-
-  const replacements = [
-    [/\u00E2\u20AC\u201D/g, "-"],
-    [/\u00E2\u20AC\u2013/g, "-"],
-    [/\u00E2\u20AC\u00A6/g, "..."],
-    [/\u00E2\u20AC\u201C/g, '"'],
-    [/\u00E2\u20AC\u009D/g, '"'],
-    [/\u00E2\u20AC\u2122/g, "'"],
-    [/\u00E2\u20AC\u02DC/g, "'"],
-
-    [/\u00C2\u00A0/g, " "],
-    [/\u00C2/g, ""],
-
-    [/\u00E2\u2020\u2019/g, "->"],
-    [/\u00E2\u2020\u0090/g, "<-"],
-
-    [/\u00E2\u20AC\u00A2/g, "-"],
-    [/\u00E2\u0080\u00A2/g, "-"],
-
-    [/\u00EF\u00BF\u00BD/g, ""]
-  ];
-
-  for (const [pattern, replacement] of replacements) {
-    text = text.replace(pattern, replacement);
-  }
-
-  /*
-   * Remove leftover mojibake fragments that commonly appear
-   * when a UTF-8 punctuation character was decoded incorrectly.
-   */
-
+  // Remove common UTF-8 / Windows-1252 mojibake.
   text = text
-    .replace(/\u00E2\u20AC[^\s]*/g, "")
-    .replace(/\u00E2\u0080[^\s]*/g, "")
-    .replace(/\u00C3[^\s]*/g, "")
-    .replace(/\u00C2[^\s]*/g, "");
+    .replace(/\uFFFD+/g, "")
+    .replace(/\u0192/g, "")
+    .replace(/\u00C3\u00AF\u00C2\u00BF\u00C2\u00BD/g, "")
+    .replace(/\u00C3\u00A2\u00C2\u20AC\u00C2\u0093/g, "-")
+    .replace(/\u00C3\u00A2\u00C2\u20AC\u00C2\u0094/g, "-")
+    .replace(/\u00C3\u00A2\u00C2\u20AC\u00C2\u00A2/g, "-")
+    .replace(/\u00C3\u00A2\u00C2\u2020\u00C2\u0092/g, "->")
+    .replace(/\u00C3\u00A2\u00C2\u2020\u00C2\u0090/g, "<-");
 
-  /*
-   * Specific cleanup for the malformed fragments visible
-   * in the current AI Analyst output, e.g.
-   *
-   * AÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ South
-   * AÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Phone
-   *
-   * Keep the actual value ("South", "Phone") while removing
-   * the corrupted marker.
-   */
-
+  // Remove remaining mojibake marker characters.
   text = text
-    .replace(/A\s*(?:\.\.\.)?\s*(?:-)?\s*/g, (match) => {
-      return match.length > 2 ? "" : match;
-    });
+    .replace(/\u00C3/g, "")
+    .replace(/\u00C2/g, "")
+    .replace(/\u00E2/g, "")
+    .replace(/\u00A0/g, " ");
 
-  /*
-   * Remove replacement characters and clean spacing.
-   */
+  // Remove control characters.
+  text = text.replace(
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,
+    ""
+  );
 
+  // Normalize whitespace.
   text = text
-    .replace(/\uFFFD/g, "")
     .replace(/[ \t]{2,}/g, " ")
-    .replace(/ +([,.;:!?])/g, "$1")
-    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 
   return text;
@@ -685,6 +638,31 @@ function buildTextReport(messages) {
   return lines.join("\n");
 }
 
+
+function cleanAIText(text) {
+  if (typeof text !== "string") {
+    return text;
+  }
+
+  return text
+    .replace(/ÃƒÂ¯Ã‚Â¿Ã‚Â½+/g, "")
+    .replace(/Ãƒâ€ Ã¢â‚¬â„¢/g, "")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢/g, "'")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“/g, "-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¯Ã‚Â¿Ã‚Â½/g, "-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦/g, "...")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬/g, "EUR")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢/g, "->")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â/g, "<-")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢/g, "-")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ/g, "-")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "-")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“/g, '"')
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, '"')
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢/g, "'")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 function makeFollowUps(message) {
   if (!message?.text) return [];
 
@@ -1026,39 +1004,35 @@ useEffect(() => {
         height: "auto",
         maxHeight: "none",
       }}
-    >
-      <div className="ai-analyst-header">
-        <div>
-          <h2>ALTA SCIENTIA AI</h2>
-          <p>
-            Where Data Meets Its World
-          </p>
+    >      
+      {(messages.length > 0 || loading) && (
+        <div className="ai-analyst-toolbar">
+          <div className="ai-analyst-actions">
+            <button
+              type="button"
+              className="ai-analyst-export"
+              onClick={exportConversation}
+              disabled={!messages.length || loading}
+            >
+              Export
+            </button>
+
+            <button
+              type="button"
+              onClick={clearChat}
+              disabled={
+                loading || messages.length === 0
+              }
+            >
+              Clear
+            </button>
+          </div>
         </div>
-
-        <div className="ai-analyst-actions">
-          <button
-            type="button"
-            className="ai-analyst-export"
-            onClick={exportConversation}
-            disabled={!messages.length || loading}
-          >
-            Export
-          </button>
-
-          <button
-            type="button"
-            onClick={clearChat}
-            disabled={
-              loading || messages.length === 0
-            }
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-
-      <div
-        className="ai-analyst-chat"
+      )}
+<div
+        className={`ai-analyst-chat ${
+  messages.length === 0 && !loading ? "is-empty" : ""
+}`}
         style={{
           overflow: "visible",
           height: "auto",
@@ -1408,3 +1382,5 @@ function AnalystLoadingState() {
     </div>
   );
 }
+
+
