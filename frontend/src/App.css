@@ -11954,3 +11954,168 @@ body .app-shell header.app-header .btn-secondary {
     max-height: 300px !important;
   }
 }
+
+/* ============================================================
+   FINAL MOBILE HEADER - COMPACT BRANDING LAYOUT
+   Keeps filename + actions inside the header.
+   Desktop layout remains unchanged.
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+  body .app-shell header.app-header {
+    position: relative !important;
+    min-height: 0 !important;
+    height: auto !important;
+    padding: 10px 12px 12px !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 7px !important;
+    overflow: visible !important;
+    box-sizing: border-box !important;
+  }
+
+  /* ----------------------------------------------------------
+     BRANDING
+     ---------------------------------------------------------- */
+
+  body .app-shell header.app-header .brand-lockup {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    margin: 0 auto !important;
+    width: auto !important;
+    max-width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  /* ----------------------------------------------------------
+     HEADER ACTION AREA
+     filename + two compact buttons
+     ---------------------------------------------------------- */
+
+  body .app-shell header.app-header .header-actions {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    grid-template-rows: auto auto !important;
+    align-items: center !important;
+    gap: 6px !important;
+
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  /* Filename occupies the complete first row */
+
+  body .app-shell header.app-header .header-filename {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 3px 8px !important;
+
+    text-align: center !important;
+    font-size: 11px !important;
+    line-height: 18px !important;
+
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+
+    box-sizing: border-box !important;
+  }
+
+  /* Both buttons share the second row */
+
+  body .app-shell header.app-header .header-actions .btn-primary,
+  body .app-shell header.app-header .header-actions .btn-secondary {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+
+    grid-row: 2 !important;
+
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    height: 40px !important;
+
+    margin: 0 !important;
+    padding: 8px 7px !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    box-sizing: border-box !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+
+    font-size: 11px !important;
+    line-height: 1 !important;
+  }
+
+  /* Explicit button placement */
+
+  body .app-shell header.app-header .header-actions .btn-primary {
+    grid-column: 1 !important;
+  }
+
+  body .app-shell header.app-header .header-actions .btn-secondary {
+    grid-column: 2 !important;
+  }
+
+  /* Prevent the following dashboard section from being pulled
+     underneath the header by older positioning rules. */
+
+  body .app-shell .ai-insights-panel {
+    position: relative !important;
+    z-index: 1 !important;
+    margin-top: 8px !important;
+  }
+}
+
+
+/* ============================================================
+   EXTRA SMALL PHONES
+   ============================================================ */
+
+@media (max-width: 420px) {
+
+  body .app-shell header.app-header {
+    padding: 8px 9px 10px !important;
+    gap: 5px !important;
+  }
+
+  body .app-shell header.app-header .header-filename {
+    font-size: 10px !important;
+    line-height: 17px !important;
+  }
+
+  body .app-shell header.app-header .header-actions .btn-primary,
+  body .app-shell header.app-header .header-actions .btn-secondary {
+    min-height: 38px !important;
+    height: 38px !important;
+    font-size: 10.5px !important;
+    padding: 7px 5px !important;
+  }
+}
