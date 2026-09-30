@@ -12119,3 +12119,132 @@ body .app-shell header.app-header .btn-secondary {
     padding: 7px 5px !important;
   }
 }
+
+/* ============================================================
+   MOBILE DATA / COLUMN TABLE - COMPACT
+   Smaller cells, fonts and spacing for narrow screens.
+   Desktop table remains unchanged.
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+  /* Column profile panel */
+  body .app-shell .panel:has(.data-table) {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 12px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  body .app-shell .panel:has(.data-table) .panel-title {
+    margin-bottom: 8px !important;
+    font-size: 16px !important;
+    line-height: 1.2 !important;
+  }
+
+  /* Horizontal scroll stays available, but table itself is compact */
+  body .app-shell .table-scroll {
+    width: 100% !important;
+    max-width: 100% !important;
+
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: thin !important;
+
+    border-radius: 8px !important;
+  }
+
+  body .app-shell .data-table {
+    width: max-content !important;
+    min-width: 620px !important;
+
+    border-spacing: 0 !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Compact table header */
+  body .app-shell .data-table th {
+    padding: 6px 7px !important;
+
+    font-size: 9px !important;
+    line-height: 1.15 !important;
+    font-weight: 700 !important;
+
+    white-space: nowrap !important;
+  }
+
+  /* Compact table cells */
+  body .app-shell .data-table td {
+    padding: 6px 7px !important;
+
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+
+    white-space: nowrap !important;
+  }
+
+  /* Column names remain readable but don't become huge */
+  body .app-shell .data-table td.mono {
+    font-size: 9.5px !important;
+    letter-spacing: -0.1px !important;
+  }
+
+  /* Keep numeric values compact */
+  body .app-shell .data-table td:nth-child(n+3) {
+    font-variant-numeric: tabular-nums !important;
+  }
+
+  /* Reduce row height */
+  body .app-shell .data-table tbody tr {
+    height: 30px !important;
+  }
+
+  /* Slightly tighter borders */
+  body .app-shell .data-table th,
+  body .app-shell .data-table td {
+    border-bottom-width: 1px !important;
+  }
+}
+
+
+/* ============================================================
+   EXTRA SMALL PHONES
+   ============================================================ */
+
+@media (max-width: 420px) {
+
+  body .app-shell .panel:has(.data-table) {
+    padding: 9px !important;
+  }
+
+  body .app-shell .panel:has(.data-table) .panel-title {
+    font-size: 15px !important;
+  }
+
+  body .app-shell .data-table {
+    min-width: 580px !important;
+    font-size: 9px !important;
+  }
+
+  body .app-shell .data-table th {
+    padding: 5px 6px !important;
+    font-size: 8px !important;
+  }
+
+  body .app-shell .data-table td {
+    padding: 5px 6px !important;
+    font-size: 9px !important;
+  }
+
+  body .app-shell .data-table td.mono {
+    font-size: 8.5px !important;
+  }
+
+  body .app-shell .data-table tbody tr {
+    height: 27px !important;
+  }
+}
