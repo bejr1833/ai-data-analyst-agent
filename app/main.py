@@ -51,7 +51,7 @@ def root():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://ai-data-analyst-agent-chi.vercel.app"],
+    allow_origins=["http://localhost:5173", "https://ai-data-analyst-agent-chi.vercel.app", "https://analyst-agent-chi.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
