@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { askDataset } from "../api/client.js";
 const AnalysisChart = lazy(() => import("./AnalysisChart"));
 import CorrelationHeatmap from "./CorrelationHeatmap";
@@ -156,7 +156,7 @@ function ResultTable({ rows }) {
                           maximumFractionDigits: 2,
                         })
                       : value == null
-                        ? "â€”"
+                        ? "-"
                         : String(value)}
                   </td>
                 );
@@ -283,14 +283,14 @@ function cleanDisplayText(value) {
    * Repair common UTF-8 -> Windows-1252 mojibake.
    *
    * Examples:
-   * â€”  -> -
-   * â€“  -> -
-   * â€¦  -> ...
-   * â€œ  -> "
-   * â€ -> "
-   * â€™  -> '
-   * Â    -> removed
-   * Ã©  -> é
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  -> -
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ  -> -
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦  -> ...
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“  -> "
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â -> "
+   * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢  -> '
+   * ÃƒÆ’Ã¢â‚¬Å¡    -> removed
+   * ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©  -> ÃƒÆ’Ã‚Â©
    */
 
   const replacements = [
@@ -333,8 +333,8 @@ function cleanDisplayText(value) {
    * Specific cleanup for the malformed fragments visible
    * in the current AI Analyst output, e.g.
    *
-   * Aâ€¦â€ South
-   * Aâ€¦â€ Phone
+   * AÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ South
+   * AÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Phone
    *
    * Keep the actual value ("South", "Phone") while removing
    * the corrupted marker.
@@ -360,7 +360,7 @@ function cleanDisplayText(value) {
 }
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") {
-    return "Ã¢â‚¬â€";
+    return "-";
   }
 
   const number = Number(value);
@@ -1029,10 +1029,9 @@ useEffect(() => {
     >
       <div className="ai-analyst-header">
         <div>
-          <h2>AI Data Analyst</h2>
+          <h2>ALTA SCIENTIA AI</h2>
           <p>
-            Ask questions about your uploaded dataset
-            in natural language.
+            Where Data Meets Its World
           </p>
         </div>
 
@@ -1283,7 +1282,7 @@ useEffect(() => {
       }`}
       aria-hidden="true"
     >
-      â–¾
+      v
     </span>
 
   </button>
@@ -1409,24 +1408,3 @@ function AnalystLoadingState() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
