@@ -722,16 +722,6 @@ export default function App() {
             ================================================= */}
 
             {overview && (
-              <section className="dashboard-section dashboard-overview-heading-section">
-                <div className="dataset-overview-heading">
-                  <span>DATASET OVERVIEW</span>
-                  <h2>Dataset profile</h2>
-                  <p>Explore the structure, quality, and visual patterns in your uploaded data.</p>
-                </div>
-              </section>
-            )}
-
-            {overview && (
               <section className="dashboard-section dashboard-metrics-section">
                 <MetricsGrid
                   overview={overview}

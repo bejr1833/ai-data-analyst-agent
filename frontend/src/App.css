@@ -11795,3 +11795,162 @@ body .app-shell header.app-header .btn-secondary {
     padding: 12px !important;
   }
 }
+
+/* ============================================================
+   MOBILE LAYOUT POLISH - HEADER + CHART COMPRESSION
+   Desktop layout remains unchanged
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+  /* ----------------------------------------------------------
+     MOBILE HEADER
+     Keep all header controls in normal document flow.
+     Prevent PDF / New Dataset from overlapping AI Analyst.
+     ---------------------------------------------------------- */
+
+  .app-header {
+    min-height: auto !important;
+    height: auto !important;
+    padding: 10px 10px 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .app-header .brand-lockup {
+    position: static !important;
+    transform: none !important;
+    margin: 0 auto !important;
+  }
+
+  .app-header .header-actions {
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: 7px !important;
+  }
+
+  .app-header .header-filename {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    text-align: center !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .app-header .header-actions .btn-primary,
+  .app-header .header-actions .btn-secondary {
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+
+  /* ----------------------------------------------------------
+     NUMERIC DISTRIBUTION CHARTS
+     Keep one chart per row but reduce excessive vertical space.
+     ---------------------------------------------------------- */
+
+  .chart-card {
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .chart-card svg {
+    max-height: 300px !important;
+  }
+
+  .chart-card .recharts-wrapper,
+  .chart-card .recharts-surface {
+    max-height: 300px !important;
+  }
+
+
+  /* ----------------------------------------------------------
+     AI ANALYST RESULT CHARTS
+     Desktop charts can remain 480px; mobile gets a compact view.
+     ---------------------------------------------------------- */
+
+  .ai-analyst-chat svg {
+    max-height: 300px !important;
+  }
+
+  .ai-analyst-chat .chart-frame,
+  .ai-analyst-chat .analysis-chart {
+    max-height: 320px !important;
+    overflow: hidden !important;
+  }
+
+
+  /* ----------------------------------------------------------
+     CORRELATION MATRIX
+     Preserve horizontal scrolling for the matrix itself.
+     ---------------------------------------------------------- */
+
+  .correlation-map-wrapper {
+    margin-top: 10px !important;
+    padding: 12px !important;
+  }
+
+  .correlation-map-scroll {
+    border-radius: 10px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  .correlation-legend {
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+    row-gap: 6px !important;
+  }
+}
+
+
+/* ============================================================
+   EXTRA SMALL PHONES
+   ============================================================ */
+
+@media (max-width: 420px) {
+
+  .app-header {
+    padding: 8px 8px 10px !important;
+    gap: 6px !important;
+  }
+
+  .app-header .header-actions {
+    gap: 6px !important;
+  }
+
+  .app-header .header-actions .btn-primary,
+  .app-header .header-actions .btn-secondary {
+    min-height: 38px !important;
+    padding: 8px 7px !important;
+    font-size: 11px !important;
+  }
+
+  .chart-card svg {
+    max-height: 270px !important;
+  }
+
+  .chart-card .recharts-wrapper,
+  .chart-card .recharts-surface {
+    max-height: 270px !important;
+  }
+
+  .ai-analyst-chat svg {
+    max-height: 280px !important;
+  }
+
+  .ai-analyst-chat .chart-frame,
+  .ai-analyst-chat .analysis-chart {
+    max-height: 300px !important;
+  }
+}
