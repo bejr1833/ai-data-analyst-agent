@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+﻿const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 
 
 /* ============================================================
@@ -43,10 +43,10 @@ export async function uploadDataset(file, onProgress) {
     import.meta.env.VITE_UPLOAD_API_BASE_URL ||
     "https://ai-data-analyst-agent-dmxy.onrender.com/api";
 
-  const uploadUrl = `${uploadBase}/upload`;
+  const uploadUrl = uploadBase + "/upload";
 
   console.log("========================================");
-  console.log("uploadDataset() START - DIRECT RENDER XHR");
+  console.log("uploadDataset() START - DIRECT RENDER XHR + MEMORY");
   console.log("File:", file?.name);
   console.log("File size:", file?.size);
   console.log("Upload URL:", uploadUrl);
@@ -54,120 +54,97 @@ export async function uploadDataset(file, onProgress) {
   console.log("Online status:", navigator.onLine);
   console.log("========================================");
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+  try {
+    if (onProgress) onProgress(5);
+    console.log("Reading selected file into memory...");
+    const buffer = await file.arrayBuffer();
+    console.log("File read successfully:", buffer.byteLength, "bytes");
 
-    xhr.open("POST", uploadUrl, true);
+    const blob = new Blob([buffer], {
+      type: file.type || "application/octet-stream",
+    });
+    console.log("Created in-memory Blob:", blob.size, blob.type);
 
-    xhr.setRequestHeader("Accept", "application/json");
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", uploadUrl, true);
+      xhr.setRequestHeader("Accept", "application/json");
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) {
-        const percent = Math.round((event.loaded / event.total) * 100);
-        onProgress(percent);
-      }
-    };
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          onProgress(percent);
+        }
+      };
 
-    xhr.onload = () => {
-      console.log("XHR response received.");
-      console.log("HTTP status:", xhr.status);
-      console.log("HTTP status text:", xhr.statusText);
+      xhr.onload = () => {
+        console.log("XHR response received.");
+        console.log("HTTP status:", xhr.status);
+        console.log("HTTP status text:", xhr.statusText);
 
-      let data = null;
+        let data = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch (error) {
+          console.error("Failed to parse XHR response:", error);
+        }
 
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch (error) {
-        console.error("Failed to parse XHR response:", error);
-      }
+        console.log("Server response:", data);
 
-      console.log("Server response:", data);
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const message = data?.detail || xhr.statusText || "Upload failed.";
+          const error = new Error(xhr.status + ": " + message);
+          error.status = xhr.status;
+          error.detail = message;
+          console.error("DIRECT RENDER XHR HTTP FAILED:", error);
+          reject(error);
+          return;
+        }
 
-      if (xhr.status < 200 || xhr.status >= 300) {
-        const message =
-          data?.detail ||
-          xhr.statusText ||
-          "Upload failed.";
+        if (!data || !data.dataset_id) {
+          const error = new Error("Upload succeeded, but the server did not return a dataset ID.");
+          console.error("DIRECT RENDER XHR INVALID RESPONSE:", error);
+          reject(error);
+          return;
+        }
 
-        const error = new Error(`${xhr.status}: ${message}`);
-        error.status = xhr.status;
-        error.detail = message;
+        if (onProgress) onProgress(100);
+        console.log("Dataset upload completed successfully.");
+        console.log("Dataset ID:", data.dataset_id);
+        console.log("========================================");
+        console.log("uploadDataset() SUCCESS - DIRECT RENDER XHR + MEMORY");
+        console.log("========================================");
+        resolve(data);
+      };
 
-        console.error("DIRECT RENDER XHR HTTP FAILED:", error);
-
+      xhr.onerror = () => {
+        const error = new Error("Network upload failed: XMLHttpRequest");
+        console.error("DIRECT RENDER XHR MEMORY NETWORK FAILED", error);
+        console.error("Upload URL:", uploadUrl);
+        console.error("Browser origin:", window.location.origin);
+        console.error("Online status:", navigator.onLine);
+        console.error("User agent:", navigator.userAgent);
         reject(error);
-        return;
-      }
+      };
 
-      if (!data || !data.dataset_id) {
-        const error = new Error(
-          "Upload succeeded, but the server did not return a dataset ID."
-        );
+      xhr.ontimeout = () => reject(new Error("Upload request timed out."));
+      xhr.onabort = () => reject(new Error("Upload request was aborted."));
+      xhr.timeout = 120000;
 
-        console.error("DIRECT RENDER XHR INVALID RESPONSE:", error);
+      const form = new FormData();
+      form.append("file", blob, file.name);
 
-        reject(error);
-        return;
-      }
-
-      if (onProgress) {
-        onProgress(100);
-      }
-
-      console.log("Dataset upload completed successfully.");
-      console.log("Dataset ID:", data.dataset_id);
-      console.log("========================================");
-      console.log("uploadDataset() SUCCESS - DIRECT RENDER XHR");
-      console.log("========================================");
-
-      resolve(data);
-    };
-
-    xhr.onerror = () => {
-      const error = new Error("Network upload failed: XMLHttpRequest");
-
-      console.error("========================================");
-      console.error("DIRECT RENDER XHR NETWORK FAILED");
-      console.error("Error:", error);
-      console.error("Message:", error.message);
-      console.error("Upload URL:", uploadUrl);
-      console.error("Browser origin:", window.location.origin);
-      console.error("Online status:", navigator.onLine);
-      console.error("User agent:", navigator.userAgent);
-      console.error("========================================");
-
-      reject(error);
-    };
-
-    xhr.ontimeout = () => {
-      const error = new Error("Upload request timed out.");
-
-      console.error("DIRECT RENDER XHR TIMEOUT");
-      console.error("Upload URL:", uploadUrl);
-
-      reject(error);
-    };
-
-    xhr.onabort = () => {
-      const error = new Error("Upload request was aborted.");
-
-      console.error("DIRECT RENDER XHR ABORTED");
-
-      reject(error);
-    };
-
-    const form = new FormData();
-    form.append("file", file);
-
-    if (onProgress) {
-      onProgress(10);
-    }
-
-    console.log("Sending DIRECT RENDER XHR request...");
-
-    xhr.send(form);
-  });
+      if (onProgress) onProgress(10);
+      console.log("Sending in-memory Blob via DIRECT RENDER XHR...");
+      xhr.send(form);
+    });
+  } catch (error) {
+    console.error("DIRECT RENDER XHR + MEMORY FAILED:", error);
+    console.error("Message:", error?.message);
+    throw error;
+  }
 }
+
 export async function getOverview(
   datasetId
 ) {
