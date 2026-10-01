@@ -1,4 +1,4 @@
-import os
+﻿import os
 import tempfile
 
 from contextlib import contextmanager
@@ -53,6 +53,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
+        "https://ai-data-analyst-agent-1-gfr9.onrender.com",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
@@ -450,6 +451,7 @@ def download_report(
             )
         }
     )
+
 
 
 

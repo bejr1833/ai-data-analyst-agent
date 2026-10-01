@@ -1,4 +1,4 @@
-import os
+﻿import os
 import uuid
 import re
 import threading
@@ -37,7 +37,55 @@ class Dataset:
 # DATASET STORAGE
 # ============================================================
 
+# Persistent storage directory.
+#
+# Local development:
+#     ./data/datasets
+#
+# Render:
+#     Set DATASET_STORAGE_DIR to the path of the mounted
+#     persistent disk, for example:
+#     /var/data/datasets
+#
+# IMPORTANT:
+# The directory must be located on persistent storage in
+# production. Render's normal filesystem is ephemeral.
+# ============================================================
+
+DATASET_STORAGE_DIR = os.getenv(
+    "DATASET_STORAGE_DIR",
+    os.path.join(
+        os.getcwd(),
+        "data",
+        "datasets",
+    ),
+)
+
+os.makedirs(
+    DATASET_STORAGE_DIR,
+    exist_ok=True,
+)
+
+
+# In-process cache.
+#
+# This is only a performance cache. The actual dataset lives
+# inside its persistent DuckDB database.
 _DATASETS = {}
+
+
+def _dataset_database_path(
+    dataset_id,
+):
+    """
+    Return the persistent DuckDB path for a dataset.
+    """
+
+    return os.path.join(
+        DATASET_STORAGE_DIR,
+        f"{dataset_id}.duckdb",
+    )
+
 
 
 # ============================================================
@@ -445,8 +493,12 @@ def load_dataset(
     # DuckDB connection
     # --------------------------------------------------------
 
+    database_path = _dataset_database_path(
+        dataset_id
+    )
+
     con = duckdb.connect(
-        database=":memory:"
+        database=database_path
     )
 
     # --------------------------------------------------------
@@ -574,6 +626,42 @@ def load_dataset(
     ).fetchone()[0]
 
     # --------------------------------------------------------
+    # PERSIST DATASET METADATA
+    # --------------------------------------------------------
+
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_metadata (
+            dataset_id VARCHAR,
+            filename VARCHAR,
+            row_count BIGINT
+        )
+        """
+    )
+
+    con.execute(
+        "DELETE FROM dataset_metadata"
+    )
+
+    con.execute(
+        """
+        INSERT INTO dataset_metadata (
+            dataset_id,
+            filename,
+            row_count
+        )
+        VALUES (?, ?, ?)
+        """,
+        [
+            dataset_id,
+            filename,
+            row_count,
+        ],
+    )
+
+    con.commit()
+
+    # --------------------------------------------------------
     # DATASET OBJECT
     # --------------------------------------------------------
 
@@ -599,15 +687,97 @@ def get_dataset(
     dataset_id,
 ):
 
-    if dataset_id not in _DATASETS:
+    # --------------------------------------------------------
+    # RETURN CACHED DATASET
+    # --------------------------------------------------------
+
+    if dataset_id in _DATASETS:
+
+        return _DATASETS[
+            dataset_id
+        ]
+
+    # --------------------------------------------------------
+    # REOPEN PERSISTED DATASET
+    # --------------------------------------------------------
+
+    database_path = _dataset_database_path(
+        dataset_id
+    )
+
+    if not os.path.exists(
+        database_path
+    ):
 
         raise KeyError(
             dataset_id
         )
 
-    return _DATASETS[
-        dataset_id
+    con = duckdb.connect(
+        database=database_path
+    )
+
+    # --------------------------------------------------------
+    # LOAD PERSISTED METADATA
+    # --------------------------------------------------------
+
+    metadata = con.execute(
+        """
+        SELECT
+            dataset_id,
+            filename,
+            row_count
+        FROM dataset_metadata
+        LIMIT 1
+        """
+    ).fetchone()
+
+    if metadata is None:
+
+        con.close()
+
+        raise KeyError(
+            dataset_id
+        )
+
+    persisted_dataset_id = metadata[0]
+    filename = metadata[1]
+    row_count = metadata[2]
+
+    # --------------------------------------------------------
+    # LOAD COLUMN INFORMATION
+    # --------------------------------------------------------
+
+    columns = [
+        row[0]
+        for row in con.execute(
+            """
+            SELECT
+                column_name
+            FROM information_schema.columns
+            WHERE table_name = 'main_table'
+            ORDER BY ordinal_position
+            """
+        ).fetchall()
     ]
+
+    # --------------------------------------------------------
+    # REBUILD DATASET OBJECT
+    # --------------------------------------------------------
+
+    dataset = Dataset(
+        dataset_id=persisted_dataset_id,
+        filename=filename,
+        con=con,
+        columns=columns,
+        row_count=row_count,
+    )
+
+    _DATASETS[
+        dataset_id
+    ] = dataset
+
+    return dataset
 
 
 # ============================================================
@@ -761,3 +931,6 @@ def datetime_columns(
             )
 
     return datetime_result
+
+
+

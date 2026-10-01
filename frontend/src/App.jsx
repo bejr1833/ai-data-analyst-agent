@@ -188,22 +188,11 @@ export default function App() {
         }
       );
 
-      const minimumVisualUploadMs = 900;
       const elapsedUploadMs = performance.now() - uploadStartedAt;
-      const remainingVisualMs = Math.max(
-        0,
-        minimumVisualUploadMs - elapsedUploadMs
+
+      console.log(
+        `Upload completed in ${Math.round(elapsedUploadMs)}ms.`
       );
-
-      if (remainingVisualMs > 0) {
-        console.log(
-          `Fast upload detected. Keeping upload animation visible for ${Math.round(remainingVisualMs)}ms.`
-        );
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, remainingVisualMs)
-        );
-      }
       console.log("2. Upload response received:");
       console.log(meta);
 
@@ -507,8 +496,6 @@ export default function App() {
             <a
               className="btn-primary"
               href={reportUrl(dataset.dataset_id)}
-              target="_blank"
-              rel="noreferrer"
             >
               Download PDF report
             </a>
@@ -854,6 +841,9 @@ export default function App() {
   );
 
 }
+
+
+
 
 
 

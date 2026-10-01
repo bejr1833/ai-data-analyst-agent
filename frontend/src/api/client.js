@@ -39,9 +39,7 @@ export async function uploadDataset(file, onProgress) {
     throw new Error("Please select a file.");
   }
 
-  const uploadBase =
-    import.meta.env.VITE_UPLOAD_API_BASE_URL ||
-    "https://ai-data-analyst-agent-dmxy.onrender.com/api";
+  const uploadBase = import.meta.env.VITE_UPLOAD_API_BASE_URL || BASE;
 
   const uploadUrl = uploadBase + "/upload";
 
@@ -296,4 +294,5 @@ export function reportUrl(
 
   return `${BASE}/datasets/${datasetId}/report.pdf`;
 }
+
 
