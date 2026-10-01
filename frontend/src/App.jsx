@@ -699,6 +699,7 @@ export default function App() {
                 <AIAnalyst
                   datasetId={dataset.dataset_id}
                   correlation={charts?.correlation || null}
+                  columns={columns || []}
                 />
               </section>
             )}
@@ -841,6 +842,7 @@ export default function App() {
   );
 
 }
+
 
 
 

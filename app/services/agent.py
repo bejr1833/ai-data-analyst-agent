@@ -1,4 +1,4 @@
-﻿
+
 """
 Agentic AI Data Analyst orchestration layer.
 
@@ -28,7 +28,7 @@ class AgentStep:
 
 
 class AnalystAgent:
-    """Planner/executor/validator around the project's existing analysis tools."""
+    """Dataset-independent planner/executor/validator around the analysis engines."""
 
     def __init__(self, dataset):
         from app.services import llm_analyst
@@ -38,6 +38,9 @@ class AnalystAgent:
 
         self.tools: dict[str, Callable | None] = {
             "local_query": getattr(llm_analyst, "_try_local_query", None),
+            "comparison": getattr(
+                llm_analyst, "_try_comparison_query", None
+            ),
             "forecast": getattr(llm_analyst, "_try_forecast_query", None),
             "trend": getattr(llm_analyst, "_try_trend_query", None),
             "statistics": getattr(llm_analyst, "_try_statistical_query", None),
@@ -49,6 +52,9 @@ class AnalystAgent:
             ),
             "grouped_analysis": getattr(llm_analyst, "_try_grouped_query", None),
             "numeric_analysis": getattr(llm_analyst, "_try_numeric_query", None),
+            "filtering": getattr(
+                llm_analyst, "_try_filtering_query", None
+            ),
             "percentage_analysis": getattr(
                 llm_analyst, "_try_percentage_query", None
             ),
@@ -62,12 +68,20 @@ class AnalystAgent:
         }
 
     def plan(self, question: str) -> list[AgentStep]:
-        q = question.lower().strip()
+        """
+        Build a dataset-independent analysis plan.
 
-        # Conversational follow-ups must be planned before generic
-        # local_query/numeric analysis. The actual context resolver is
-        # executed first in run(), but exposing it in the plan also makes
-        # the agent trace accurately describe what happened.
+        Routing principle:
+        - Prefer deterministic local engines for common analytical intents.
+        - Treat ranking as an analytical operation, never as a business-specific
+          operation.
+        - Keep grouped_analysis ahead of numeric_analysis when a dimension is
+          explicitly requested.
+        - Leave unsupported/ambiguous questions to the general LLM fallback.
+        """
+        q = (question or "").lower().strip()
+
+        # 1. Conversational follow-ups have the highest priority.
         if self._contains_any(
             q,
             [
@@ -86,56 +100,152 @@ class AnalystAgent:
                 "how did you get that",
             ],
         ):
-            return [AgentStep(
-                "contextual_followup",
-                "Explain the previous analysis using conversation context",
-            )]
+            return [
+                AgentStep(
+                    "contextual_followup",
+                    "Explain the previous analysis using conversation context",
+                )
+            ]
 
-        # Explicit comparison requests are grouped comparisons.
-        if (
-            "compare" in q
-            or "comparison" in q
-            or " versus " in q
-            or " vs " in q
-        ):
-            return [AgentStep(
-                "grouped_analysis",
-                "Compare the requested groups",
-            )]
-        # Explicit Top-N/Bottom-N requests are rankings.
-        if re.search(r"\b(?:top|bottom)\s+\d+\b", q):
-            return [AgentStep(
-                "business_insight",
-                "Return the requested Top-N/Bottom-N ranking",
-            )]
+        # 2. Explicit multi-column comparisons.
+        #
+        # Examples:
+        #   "Compare Mathematics and Programming"
+        #   "Which has the higher average, Mathematics or Programming?"
+        #   "Which has the lower average, Mathematics or Programming?"
+        #   "What is the difference between Mathematics and Programming?"
+        #
+        # Comparison is routed separately from grouped analysis.
+        # This prevents questions comparing numeric columns from
+        # being interpreted as categorical/group comparisons.
+        comparison_language = self._contains_any(
+            q,
+            [
+                "compare",
+                "comparison",
+                " versus ",
+                " vs ",
+                "difference between",
+                "difference of",
+                "which has",
+                "which is higher",
+                "which is lower",
+                "higher",
+                "lower",
+                "ratio",
+                "percentage higher",
+                "percentage lower",
+                "percentage difference",
+                "percent higher",
+                "percent lower",
+                "percent difference",
+                "how many times",
+                "times as much",
+                "times higher",
+            ],
+        )
 
+        if comparison_language:
+            columns = getattr(self.dataset, "columns", None)
+
+            if columns is None:
+                try:
+                    columns = list(self.dataset.df.columns)
+                except Exception:
+                    columns = []
+
+            numeric_columns = []
+
+            try:
+                from app.services.llm_analyst import _numeric_columns
+
+                numeric_columns = _numeric_columns(self.dataset)
+            except Exception:
+                numeric_columns = []
+
+            try:
+                from app.services.llm_analyst import _find_mentioned_columns
+
+                mentioned_columns = _find_mentioned_columns(
+                    q,
+                    columns,
+                )
+            except Exception:
+                mentioned_columns = []
+
+            mentioned_numeric = [
+                column
+                for column in mentioned_columns
+                if column in numeric_columns
+            ]
+
+            if len(mentioned_numeric) >= 2:
+                return [
+                    AgentStep(
+                        "comparison",
+                        "Compare the explicitly requested numeric columns",
+                    )
+                ]
+
+        # 3. Scenario / what-if analysis.
+
+        # 3. Scenario / what-if analysis.
         if self._contains_any(
             q,
             [
-                "what if", "suppose", "scenario", "impact if", "effect if",
-                "increase by", "decrease by",
+                "what if",
+                "suppose",
+                "scenario",
+                "impact if",
+                "effect if",
+                "increase by",
+                "decrease by",
+                "raise by",
+                "reduce by",
+                "grow by",
+                "drop by",
             ],
         ):
             return [AgentStep("scenario", "Run scenario/what-if analysis")]
 
+        # 4. Forecasting.
         if self._contains_any(
             q,
             [
-                "forecast", "predict", "prediction", "future",
-                "next week", "next month", "next quarter", "next year",
+                "forecast",
+                "predict",
+                "prediction",
+                "future",
+                "next week",
+                "next month",
+                "next quarter",
+                "next year",
             ],
         ):
             return [AgentStep("forecast", "Forecast a future metric")]
 
+        # 5. Anomaly / outlier detection.
         if self._contains_any(
             q,
             [
-                "anomaly", "anomalies", "outlier", "outliers",
-                "unusual", "abnormal", "unexpected", "irregular",
+                "anomaly",
+                "anomalies",
+                "outlier",
+                "outliers",
+                "unusual",
+                "abnormal",
+                "unexpected",
+                "irregular",
             ],
         ):
-            return [AgentStep("anomaly_detection", "Detect unusual observations")]
+            return [
+                AgentStep(
+                    "anomaly_detection",
+                    "Detect unusual observations",
+                )
+            ]
 
+        # 6. Data quality.
         if self._contains_any(
             q,
             [
@@ -145,10 +255,6 @@ class AnalystAgent:
                 "data profiling",
                 "quality summary",
                 "missing values",
-"unique values",
-"most unique",
-"distinct values",
-"most distinct",
                 "missing data",
                 "null values",
                 "null count",
@@ -169,24 +275,463 @@ class AnalystAgent:
                 )
             ]
 
+        # 7. Statistics / correlation / distribution.
         if self._contains_any(
             q,
             [
-                "correlation", "median", "standard deviation", "variance",
-                "percentile", "distribution", "statistics",
+                "correlation",
+                "correlate",
+                "median",
+                "standard deviation",
+                "std dev",
+                "variance",
+                "percentile",
+                "quartile",
+                "distribution",
+                "statistics",
+                "statistical",
             ],
         ):
             return [AgentStep("statistics", "Run statistical analysis")]
 
+        # 8. Time/trend analysis.
         if self._contains_any(
             q,
             [
-                "trend", "over time", "time series", "historical trend",
-                "growth over time", "monthly trend", "daily trend",
+                "trend",
+                "over time",
+                "time series",
+                "historical trend",
+                "growth over time",
+                "monthly trend",
+                "daily trend",
+                "weekly trend",
+                "yearly trend",
             ],
         ):
             return [AgentStep("trend", "Analyze the metric over time")]
 
+        # ============================================================
+        # HIGH-PRIORITY GENERIC ANALYSIS INTENTS
+        # ============================================================
+        #
+        # Resolve concrete dataset-column operations before semantic
+        # keyword operations such as "percentage" or "maximum".
+        #
+        # Examples:
+        #   "average Percentage"
+        #       -> AVG(Percentage)
+        #
+        #   "maximum Percentage"
+        #       -> MAX(Percentage)
+        #
+        #   "total Total_Marks"
+        #       -> SUM(Total_Marks)
+        #
+        #   "Percentage greater than 80"
+        #       -> filtering
+        #
+        # A column named "Percentage" must NOT automatically mean
+        # percentage/share analysis.
+        # ============================================================
+
+        columns = getattr(self.dataset, "columns", None)
+
+        if columns is None:
+            try:
+                columns = list(self.dataset.df.columns)
+            except Exception:
+                columns = []
+
+        normalized_columns = {
+            str(column).strip().lower().replace("_", " "): column
+            for column in columns
+        }
+
+        def mentioned_columns():
+            found = []
+
+            for normalized, original in normalized_columns.items():
+                if normalized and normalized in q:
+                    found.append(original)
+
+            # Also support compact forms such as:
+            # Attendance_Percent -> attendance percent
+            # Total_Marks -> total marks
+            #
+            # Avoid duplicate matches.
+            unique = []
+
+            for column in found:
+                if column not in unique:
+                    unique.append(column)
+
+            return unique
+
+        mentioned = mentioned_columns()
+
+        # ------------------------------------------------------------
+        # Filtering / conditions
+        # ------------------------------------------------------------
+        #
+        # Examples:
+        #   Percentage greater than 80
+        #   Attendance_Percent > 75
+        #   Percentage > 80 and Attendance_Percent > 75
+        #
+        # These must be handled before percentage_analysis.
+        # ------------------------------------------------------------
+
+        comparison_pattern = re.compile(
+            r"(?:>=|<=|!=|<>|>|<|=)|"
+            r"\b(?:greater than|less than|at least|at most|equal to|"
+            r"above|below|over|under)\b",
+            re.IGNORECASE,
+        )
+
+        if mentioned and comparison_pattern.search(q):
+            return [
+                AgentStep(
+                    "filtering",
+                    "Filter dataset rows using one or more column conditions",
+                )
+            ]
+
+        # ------------------------------------------------------------
+        # Ranking / TOP-N / BOTTOM-N
+        # ------------------------------------------------------------
+        #
+        # Ranking must be evaluated BEFORE generic aggregation because
+        # questions such as:
+        #
+        #   "top 3 Departments by average Percentage"
+        #
+        # contain both ranking language and aggregation language.
+        #
+        # The semantic operation is:
+        #
+        #   GROUP BY Department
+        #   AVG(Percentage)
+        #   ORDER BY value DESC
+        #   LIMIT 3
+        # ------------------------------------------------------------
+
+        ranking_pattern = re.compile(
+            r"\b(?:top|bottom)\s+\d+\b",
+            re.IGNORECASE,
+        )
+
+        # A standalone MAX/MIN question is numeric aggregation:
+        #
+        #   "What is the maximum Percentage?"
+        #   "What is the minimum Percentage?"
+        #
+        # It becomes ranking only when there is a group/dimension
+        # involved or explicit TOP/BOTTOM/ranking language.
+        grouped_ranking_hint = (
+            " by " in q
+            or " for each " in q
+            or " per " in q
+            or " across " in q
+            or " grouped " in q
+            or " wise" in q
+            or "wise" in q
+            or "-wise" in q
+            or "which " in q
+            or "what department" in q
+            or "what category" in q
+            or "what group" in q
+        )
+
+        ranking_language = self._contains_any(
+            q,
+            [
+                "highest",
+                "lowest",
+                "best",
+                "worst",
+                "most",
+                "least",
+                "leading",
+                "largest",
+                "smallest",
+                "ranked",
+                "ranking",
+                "rank",
+            ],
+        )
+
+        explicit_top_bottom = bool(ranking_pattern.search(q))
+
+        # ------------------------------------------------------------
+        # Scalar MAX/MIN questions
+        # ------------------------------------------------------------
+        # Questions such as:
+        #   "What is the highest revenue?"
+        #   "What is the lowest unit price?"
+        #   "What is the maximum profit?"
+        #
+        # ask for ONE numeric value, not a ranked/grouped dimension.
+        # Route these to numeric_analysis so the analysis engine can
+        # resolve the metric dynamically and execute MAX/MIN.
+        #
+        # By contrast:
+        #   "Which region has the highest revenue?"
+        #   "Top 10 products by revenue"
+        #
+        # contain an explicit dimension/ranking request and remain
+        # grouped/ranking operations.
+        # ------------------------------------------------------------
+        scalar_ranking_request = (
+            ranking_language
+            and not grouped_ranking_hint
+            and len(mentioned) == 1
+        )
+
+        if scalar_ranking_request:
+            return [
+                AgentStep(
+                    "numeric_analysis",
+                    "Compute the highest or lowest value of the requested numeric column",
+                )
+            ]
+
+        if explicit_top_bottom or (
+            ranking_language and grouped_ranking_hint
+        ):
+            return [
+                AgentStep(
+                    "grouped_analysis",
+                    "Rank groups using the requested metric and aggregation",
+                )
+            ]
+
+        # ------------------------------------------------------------
+        # Generic grouped aggregation
+        # ------------------------------------------------------------
+        #
+        # IMPORTANT:
+        # Grouped aggregation must be evaluated BEFORE the generic
+        # numeric aggregation blocks below.
+        #
+        # Examples:
+        #   "average Percentage by Department"
+        #   "average Sales per Region"
+        #   "total Revenue by Category"
+        #   "mean Score for each Class"
+        #   "sum Amount across Product"
+        #
+        # The grouping dimension is resolved dynamically from the
+        # dataset schema by the grouped-analysis engine.
+        # ------------------------------------------------------------
+
+        grouped_intent = (
+            " by " in q
+            or " wise" in q
+            or "wise" in q
+            or "-wise" in q
+            or " for each " in q
+            or " each " in q
+            or " per " in q
+            or " across " in q
+            or " grouped " in q
+            or q.endswith(" grouped")
+            or (
+                "compare" in q
+                and " between " in q
+                and " and " in q
+            )
+        )
+
+        aggregation_words = (
+            "average",
+            "avg",
+            "mean",
+            "sum",
+            "total",
+            "maximum",
+            "minimum",
+            "highest",
+            "lowest",
+            "max",
+            "min",
+            "median",
+        )
+
+        has_aggregation = self._contains_any(
+            q,
+            aggregation_words,
+        )
+
+        aggregation_language = self._contains_any(
+            q,
+            [
+                "average",
+                "avg",
+                "mean",
+                "sum",
+                "total",
+                "count",
+                "how many",
+                "number of",
+                "minimum",
+                "maximum",
+                "min",
+                "max",
+                "median",
+            ],
+        )
+
+        if grouped_intent and aggregation_language:
+            return [
+                AgentStep(
+                    "grouped_analysis",
+                    "Aggregate the requested metric grouped by the requested dimension",
+                )
+            ]
+
+        # ------------------------------------------------------------
+        # Multi-column numeric aggregation
+        # ------------------------------------------------------------
+        #
+        # Example:
+        #   "What is the average of Mathematics, Programming,
+        #    and Data_Science?"
+        #
+        # If multiple numeric dataset columns are explicitly mentioned
+        # and the question asks for an aggregate, do NOT interpret one
+        # of those columns as a grouping dimension.
+        # ------------------------------------------------------------
+
+        if has_aggregation and len(mentioned) >= 2:
+            return [
+                AgentStep(
+                    "numeric_analysis",
+                    "Aggregate multiple explicitly requested numeric columns",
+                )
+            ]
+
+        # ------------------------------------------------------------
+        # Simple single-column aggregation
+        # ------------------------------------------------------------
+        #
+        # Examples:
+        #   "What is the average Percentage?"
+        #   "What is the maximum Percentage?"
+        #   "What is the minimum Percentage?"
+        #   "What is the total Total_Marks?"
+        #
+        # ------------------------------------------------------------
+
+        if has_aggregation and len(mentioned) == 1:
+            return [
+                AgentStep(
+                    "numeric_analysis",
+                    "Aggregate the explicitly requested dataset column",
+                )
+            ]
+
+        # 9. Grouped analysis has priority over percentage/share detection.
+        #
+        # A column can legitimately be named "Percentage". For example:
+        #   "average Percentage by Department"
+        # means AVG(Percentage) grouped by Department, NOT percentage share.
+        #
+        # Likewise:
+        #   "How many students are in each Department?"
+        # means COUNT(*) grouped by Department.
+
+        grouped_intent = (
+            " by " in q
+            or " wise" in q
+            or "wise" in q
+            or "-wise" in q
+            or " for each " in q
+            or " each " in q
+            or " per " in q
+            or " across " in q
+            or " grouped " in q
+            or q.endswith(" grouped")
+            or (
+                "compare" in q
+                and " between " in q
+                and " and " in q
+            )
+        )
+
+        aggregation_language = self._contains_any(
+            q,
+            [
+                "average",
+                "avg",
+                "mean",
+                "sum",
+                "total",
+                "count",
+                "how many",
+                "number of",
+                "minimum",
+                "maximum",
+                "min",
+                "max",
+                "median",
+            ],
+        )
+
+        if grouped_intent and aggregation_language:
+            return [
+                AgentStep(
+                    "grouped_analysis",
+                    "Group and aggregate the requested metric by a dimension",
+                )
+            ]
+
+        # 10. Percentage / rate questions.
+        #
+        # Only reach this block when the question is not already an
+        # explicit grouped aggregation.
+        percentage_intent = self._contains_any(
+            q,
+            [
+                "percentage",
+                "percent",
+                "proportion",
+                "share of",
+                "rate",
+                "ratio",
+                "return rate",
+            ],
+        )
+
+        ranking_language = self._contains_any(
+            q,
+            [
+                "highest",
+                "lowest",
+                "best",
+                "worst",
+                "most",
+                "least",
+                "maximum",
+                "minimum",
+                "leading",
+                "largest",
+                "smallest",
+                "ranked",
+                "ranking",
+                "rank",
+            ],
+        )
+
+        if percentage_intent and not ranking_language:
+            return [
+                AgentStep(
+                    "percentage_analysis",
+                    "Calculate a percentage, proportion, rate, or ratio locally",
+                )
+            ]
+
+        # 10. Explicit insight requests.
         if self._contains_any(
             q,
             [
@@ -199,41 +744,60 @@ class AnalystAgent:
                 "what can you conclude",
             ],
         ):
-            return [AgentStep(
-                "main_insight",
-                "Identify the most important pattern in the dataset",
-            )]
+            return [
+                AgentStep(
+                    "main_insight",
+                    "Identify the most important pattern in the dataset",
+                )
+            ]
 
-        if self._contains_any(
-            q,
-            [
-                "percentage",
-                "percent",
-                "return rate",
-            ],
-        ):
-            return [AgentStep(
-                "percentage_analysis",
-                "Calculate a percentage or rate locally",
-            )]
+        # 11. Ranking is generic analytics.
+        #
+        # IMPORTANT: Never route ranking to "business_insight". A question
+        # such as "Which department has the highest average CGPA?" is the same
+        # analytical operation as "Which category has the highest average
+        # price?" or "Which region has the lowest mean score?".
+        ranking_intent = (
+            bool(re.search(r"\btop\s+\d+\b", q))
+            or bool(re.search(r"\bbottom\s+\d+\b", q))
+            or self._contains_any(
+                q,
+                [
+                    "highest",
+                    "lowest",
+                    "best",
+                    "worst",
+                    "most",
+                    "least",
+                    "maximum",
+                    "minimum",
+                    "leading",
+                    "largest",
+                    "smallest",
+                    "ranked",
+                    "ranking",
+                    "rank",
+                ],
+            )
+        )
 
-        if self._contains_any(
-            q,
-            [
-                "highest", "lowest", "top", "bottom", "best", "worst", "most", "least",
-                "maximum", "minimum", "leading", "largest", "smallest",
-                "ranked", "ranking", "rank",
-            ],
-        ):
-            return [AgentStep(
-                "business_insight",
-                "Find a business ranking/insight",
-            )]
+        # If ranking and an explicit grouping dimension are both present,
+        # grouped_analysis is the correct deterministic engine.
+        if ranking_intent:
+            return [
+                AgentStep(
+                    "grouped_analysis",
+                    "Rank groups using the requested metric and aggregation",
+                )
+            ]
 
-        # Grouped analytical questions must take priority over
-        # generic numeric aggregation. Support natural-language forms
-        # such as "by region", "region wise", "region-wise",
-        # "for each region", "per region", and "across regions".
+        # 12. Grouped analysis.
+        #
+        # Examples:
+        #   "average CGPA by Department"
+        #   "how many students are in each Department"
+        #   "sales per region"
+        #   "mean score for each category"
         grouped_intent = (
             " by " in q
             or " wise" in q
@@ -242,47 +806,53 @@ class AnalystAgent:
             or " for each " in q
             or " per " in q
             or " across " in q
+            or " grouped " in q
+            or q.endswith(" grouped")
             or (
                 "compare" in q
                 and " between " in q
                 and " and " in q
             )
-            or self._contains_any(
-                q,
-                [
-                    "per region",
-                    "per product",
-                    "per category",
-                    "per month",
-                    "per year",
-                    "per customer",
-                    "grouped",
-                ],
-            )
         )
 
         if grouped_intent:
-            return [AgentStep(
-                "grouped_analysis",
-                "Group a metric by a dimension",
-            )]
+            return [
+                AgentStep(
+                    "grouped_analysis",
+                    "Group a metric by a requested dimension",
+                )
+            ]
 
+        # 13. Generic scalar aggregation/count.
         if self._contains_any(
             q,
             [
-                "total", "sum", "average", "avg", "mean", "count",
-                "how many", "maximum", "minimum",
+                "total",
+                "sum",
+                "average",
+                "avg",
+                "mean",
+                "count",
+                "how many",
+                "maximum",
+                "minimum",
             ],
         ):
-            return [AgentStep(
-                "numeric_analysis",
-                "Compute a numeric metric",
-            )]
+            return [
+                AgentStep(
+                    "numeric_analysis",
+                    "Compute a numeric metric locally",
+                )
+            ]
 
-        return [AgentStep(
-            "local_query",
-            "Try a deterministic local dataset query first",
-        )]
+        # 14. Final deterministic attempt. If it cannot understand the
+        # question, run() falls through to the general LLM analysis engine.
+        return [
+            AgentStep(
+                "local_query",
+                "Try a deterministic local dataset query first",
+            )
+        ]
 
     def run(
         self,
@@ -304,6 +874,7 @@ class AnalystAgent:
         print("==============================")
 
         result = None
+        fallback_used = False
 
         # ----------------------------------------------------
         # Contextual follow-up gets absolute priority.
@@ -514,6 +1085,7 @@ class AnalystAgent:
                 if result is not None:
                     break
         if result is None:
+            fallback_used = True
             print("Agent: using general SQL fallback.")
             try:
                 result = self.llm.analyze_with_llm(
@@ -537,7 +1109,7 @@ class AnalystAgent:
                 (time.perf_counter() - started) * 1000,
                 2,
             ),
-            "fallback_used": result.get("model") != "local",
+            "fallback_used": fallback_used,
         }
 
         print("Agent result type:", result.get("type"))
@@ -600,7 +1172,19 @@ class AnalystAgent:
 
     @staticmethod
     def _contains_any(text: str, words: list[str]) -> bool:
-        return any(word in text for word in words)
+        """Return True when any phrase/word is present without substring traps."""
+        normalized = f" {str(text).lower().strip()} "
+        for word in words:
+            candidate = str(word).lower().strip()
+            if not candidate:
+                continue
+            if " " in candidate or "-" in candidate:
+                if candidate in normalized:
+                    return True
+            else:
+                if re.search(rf"\b{re.escape(candidate)}\b", normalized):
+                    return True
+        return False
 
     def _run_data_quality(self, dataset, question: str):
         """
@@ -1057,6 +1641,8 @@ class AnalystAgent:
             return alias_matches[0][1]
 
         return None
+
+
 
 
 

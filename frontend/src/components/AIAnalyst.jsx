@@ -1,50 +1,171 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+﻿import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { askDataset } from "../api/client.js";
 const AnalysisChart = lazy(() => import("./AnalysisChart"));
 import CorrelationHeatmap from "./CorrelationHeatmap";
 import DataStory from "./DataStory";
 import AgentTrace from "./AgentTrace";
 
-const SUGGESTION_GROUPS = [
-  {
-    label: "Revenue",
-    questions: [
-      "What is the total revenue?",
-      "Show revenue trend over time",
-    ],
-  },
-  {
-    label: "Regions",
-    questions: [
-      "Show total revenue by region",
-      "Which region has the highest revenue?",
-    ],
-  },
-  {
-    label: "Forecast",
-    questions: [
-      "Forecast revenue for the next 7 days",
-    ],
-  },
-  {
-    label: "Relationships",
-    questions: [
-      "What is the correlation between revenue and marketing spend?",
-    ],
-  },
-  {
-    label: "Scenarios",
-    questions: [
-      "What if revenue increases by 20%?",
-    ],
-  },
-  {
+function normalizeColumnName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildSuggestionGroups(columns = []) {
+  const names = Array.isArray(columns)
+      ? columns
+          .map((column) =>
+            typeof column === "string"
+              ? column
+              : column?.column || column?.name || column?.column_name || ""
+          )
+          .filter(Boolean)
+      : [];
+
+  const normalized = names.map(normalizeColumnName);
+
+  const firstMatch = (...terms) => {
+    const index = normalized.findIndex((name) =>
+      terms.some((term) => name.includes(term))
+    );
+
+    return index >= 0 ? names[index] : null;
+  };
+
+  const groups = [];
+
+  const metricColumn =
+    firstMatch(
+      "total marks",
+      "percentage",
+      "revenue",
+      "sales",
+      "amount",
+      "profit",
+      "income",
+      "score",
+      "marks",
+      "value"
+    ) ||
+    firstMatch("percent");
+
+  const categoryColumn = firstMatch(
+    "department",
+    "region",
+    "category",
+    "segment",
+    "product",
+    "gender",
+    "class",
+    "grade",
+    "type"
+  );
+
+  const dateColumn = firstMatch(
+    "date",
+    "time",
+    "month"
+  );
+
+  const attendanceColumn = firstMatch("attendance");
+
+  const studyColumn = firstMatch(
+    "study hours",
+    "study",
+    "hours"
+  );
+
+  const subjectColumn = firstMatch(
+    "mathematics",
+    "math",
+    "physics",
+    "chemistry",
+    "programming",
+    "data science",
+    "dbms",
+    "computer networks"
+  );
+
+  if (metricColumn) {
+    groups.push({
+      label: "Key Metrics",
+      questions: [
+        `What is the average ${metricColumn}?`,
+        `What is the highest ${metricColumn}?`,
+      ],
+    });
+  }
+
+  if (categoryColumn && metricColumn) {
+    groups.push({
+      label: "Comparisons",
+      questions: [
+        `Compare ${metricColumn} across ${categoryColumn}.`,
+        `Which ${categoryColumn} has the highest average ${metricColumn}?`,
+      ],
+    });
+  }
+
+  if (dateColumn && metricColumn) {
+    groups.push({
+      label: "Trends",
+      questions: [
+        `Show ${metricColumn} over time.`,
+        `Explain the trend in ${metricColumn}.`,
+      ],
+    });
+  }
+
+  if (attendanceColumn && metricColumn) {
+    groups.push({
+      label: "Relationships",
+      questions: [
+        `Show the relationship between ${attendanceColumn} and ${metricColumn}.`,
+        `Is ${attendanceColumn} correlated with ${metricColumn}?`,
+      ],
+    });
+  }
+
+  if (studyColumn && metricColumn) {
+    groups.push({
+      label: "Study Analysis",
+      questions: [
+        `Show the relationship between ${studyColumn} and ${metricColumn}.`,
+        `Is ${studyColumn} related to ${metricColumn}?`,
+      ],
+    });
+  }
+
+  if (subjectColumn) {
+    groups.push({
+      label: "Subject Performance",
+      questions: [
+        `What is the average ${subjectColumn}?`,
+        `Show the distribution of ${subjectColumn}.`,
+      ],
+    });
+  }
+
+  if (categoryColumn) {
+    groups.push({
+      label: "Distribution",
+      questions: [
+        `Show the distribution of ${categoryColumn}.`,
+        `Which ${categoryColumn} has the most records?`,
+      ],
+    });
+  }
+
+  groups.push({
     label: "Data Quality",
     questions: [
-      "Show me the data quality summary",
+      "Show me the data quality summary.",
     ],
-  },
-];
+  });
+
+  return groups.slice(0, 6);
+}
 
 function extractRows(result) {
   if (Array.isArray(result?.rows)) return result.rows;
@@ -645,21 +766,21 @@ function cleanAIText(text) {
   }
 
   return text
-    .replace(/ÃƒÂ¯Ã‚Â¿Ã‚Â½+/g, "")
-    .replace(/Ãƒâ€ Ã¢â‚¬â„¢/g, "")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢/g, "'")
+    .replace(/ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½+/g, "")
+    .replace(/ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢/g, "")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢/g, "'")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ/g, "-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½/g, "-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦/g, "...")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬/g, "EUR")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢/g, "->")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "<-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢/g, "-")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“/g, "-")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¯Ã‚Â¿Ã‚Â½/g, "-")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦/g, "...")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬/g, "EUR")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢/g, "->")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â/g, "<-")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢/g, "-")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ/g, "-")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "-")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“/g, '"')
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, '"')
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢/g, "'")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "-")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ/g, '"')
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, '"')
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢/g, "'")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -752,7 +873,7 @@ function getFriendlyAnalysisError(error) {
 
   return detail;
 }
-export default function AIAnalyst({ datasetId, correlation }) {
+export default function AIAnalyst({ datasetId, correlation, columns = [] }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -985,6 +1106,11 @@ useEffect(() => {
       buildTextReport(messages)
     );
   }
+
+  const suggestionGroups = useMemo(
+    () => buildSuggestionGroups(columns),
+    [columns]
+  );
 
   const followUps = useMemo(() => {
     const lastAssistant = [...messages]
@@ -1245,7 +1371,7 @@ useEffect(() => {
       </span>
 
       <span className="ai-insights-count">
-        {SUGGESTION_GROUPS.length} topics
+        {suggestionGroups.length} topics
       </span>
 
     </div>
@@ -1269,7 +1395,7 @@ useEffect(() => {
 
     <div className="ai-insights-groups">
 
-      {SUGGESTION_GROUPS.map((group) => (
+      {suggestionGroups.map((group) => (
 
         <div
           className="ai-insight-group"
@@ -1382,5 +1508,9 @@ function AnalystLoadingState() {
     </div>
   );
 }
+
+
+
+
 
 

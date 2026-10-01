@@ -1,101 +1,192 @@
-import os
+﻿import os
 import re
-import numbers
+import time
 from typing import Any
 
 from dotenv import load_dotenv
-from google import genai
 
 from app.services.data_loader import Dataset
-import time
+
+try:
+    from google import genai
+except Exception:
+    genai = None
 
 
-# ============================================================
-# GEMINI CONFIGURATION
-# ============================================================
+# ============================================================================
+# GENERIC AI DATA ANALYST ENGINE
+# ============================================================================
+#
+# Design:
+#   question
+#      -> schema understanding
+#      -> intent/column resolution
+#      -> deterministic DuckDB analysis
+#      -> result formatting + visualization
+#      -> Gemini SQL fallback when the local planner cannot resolve a query
+#
+# This file intentionally avoids business-specific metric assumptions.
+# It is designed to work from the uploaded dataset's actual schema.
+# ============================================================================
 
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not GEMINI_API_KEY:
-    raise RuntimeError(
-        "GEMINI_API_KEY was not found. "
-        "Make sure backend/.env contains GEMINI_API_KEY."
-    )
-
-client = genai.Client(
-    api_key=GEMINI_API_KEY
-)
-
 MODEL = "gemini-3.6-flash"
 
+_client = None
+if GEMINI_API_KEY and genai is not None:
+    try:
+        _client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception:
+        _client = None
 
-# ============================================================
-# COLUMN HELPERS
-# ============================================================
+
+# ============================================================================
+# Core helpers
+# ============================================================================
 
 def _q(column: str) -> str:
-    """Safely quote a DuckDB column name."""
+    """Safely quote a DuckDB identifier."""
     return '"' + str(column).replace('"', '""') + '"'
 
 
-# ============================================================
-# SCHEMA
-# ============================================================
+def _norm(value: Any) -> str:
+    """Normalize natural-language text and column names for matching."""
+    value = str(value or "").strip().lower()
+    value = re.sub(r"[_\-]+", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value
 
-def _schema_text(dataset: Dataset) -> str:
-    """
-    Build the dataset schema for Gemini using DuckDB metadata.
 
-    The Dataset object stores the DuckDB connection and column names,
-    rather than a pandas DataFrame or dtypes attribute.
-    """
+def _readable(column: str) -> str:
+    return re.sub(r"\s+", " ", str(column).replace("_", " ")).strip()
 
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _schema(dataset: Dataset) -> list[dict[str, str]]:
+    """Read the real DuckDB schema; no hard-coded dataset columns."""
     rows = dataset.con.execute(
         """
-        SELECT
-            column_name,
-            data_type
+        SELECT column_name, data_type
         FROM information_schema.columns
         WHERE table_name = 'main_table'
         ORDER BY ordinal_position
         """
     ).fetchall()
 
-    if not rows:
-        raise ValueError("Dataset contains no columns.")
-
-    lines = [
-        f"Dataset: {dataset.filename}",
-        f"Rows: {dataset.row_count}",
-        "Columns:",
+    return [
+        {"name": str(row[0]), "type": str(row[1])}
+        for row in rows
     ]
 
-    for column_name, data_type in rows:
-        lines.append(
-            f'- "{column_name}" ({data_type})'
-        )
 
-    return "\n".join(lines)
-# ============================================================
-# CLEAN GEMINI SQL
-# ============================================================
+def _columns(dataset: Dataset) -> list[str]:
+    return [item["name"] for item in _schema(dataset)]
+
+
+def _numeric_columns(dataset: Dataset) -> list[str]:
+    numeric_types = (
+        "INTEGER",
+        "BIGINT",
+        "SMALLINT",
+        "TINYINT",
+        "HUGEINT",
+        "DECIMAL",
+        "DOUBLE",
+        "FLOAT",
+        "REAL",
+        "UBIGINT",
+        "UINTEGER",
+        "USMALLINT",
+        "UTINYINT",
+    )
+
+    return [
+        item["name"]
+        for item in _schema(dataset)
+        if any(
+            numeric_type in item["type"].upper()
+            for numeric_type in numeric_types
+        )
+    ]
+
+
+def _date_columns(dataset: Dataset) -> list[str]:
+    return [
+        item["name"]
+        for item in _schema(dataset)
+        if any(
+            data_type in item["type"].upper()
+            for data_type in ("DATE", "TIMESTAMP", "TIME")
+        )
+    ]
+
+
+def _rows_to_dicts(description, rows) -> list[dict[str, Any]]:
+    names = [str(item[0]) for item in description]
+    return [
+        dict(zip(names, row))
+        for row in rows
+    ]
+
+
+def _execute(
+    dataset: Dataset,
+    sql: str,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    cursor = dataset.con.execute(sql)
+    rows = cursor.fetchall()
+
+    return (
+        [str(item[0]) for item in cursor.description],
+        _rows_to_dicts(cursor.description, rows),
+    )
+
+
+def _base_result(
+    question: str,
+    result_type: str,
+    answer: str,
+    sql: str,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    visualization: dict | None = None,
+    **extra,
+) -> dict:
+    result = {
+        "question": question,
+        "type": result_type,
+        "answer": answer,
+        "sql": sql.strip() if sql else None,
+        "columns": columns,
+        "rows": rows,
+        "row_count": len(rows),
+        "model": "local",
+        "visualization": visualization or {
+            "type": "table",
+            "x": "",
+            "y": "",
+            "title": "",
+        },
+    }
+
+    result.update(extra)
+    return result
+
 
 def _clean_sql(text: str) -> str:
-    """
-    Clean Gemini's SQL response.
-    Supports SELECT and WITH queries.
-    """
+    """Clean a Gemini SQL response."""
+    text = str(text or "").strip()
 
-    if not text:
-        raise ValueError(
-            "Gemini returned an empty SQL response."
-        )
-
-    text = str(text).strip()
-
-    # Remove opening markdown code fence
     text = re.sub(
         r"^\s*```(?:sql)?\s*",
         "",
@@ -103,17 +194,12 @@ def _clean_sql(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Remove closing markdown code fence
     text = re.sub(
         r"\s*```\s*$",
         "",
         text,
-        flags=re.IGNORECASE,
     )
 
-    text = text.strip()
-
-    # Keep the query starting from SELECT or WITH
     match = re.search(
         r"\b(?:SELECT|WITH)\b",
         text,
@@ -123,2923 +209,3235 @@ def _clean_sql(text: str) -> str:
     if match:
         text = text[match.start():]
 
-    # Remove trailing semicolon
-    text = text.rstrip(";").strip()
+    return text.rstrip(";").strip()
 
-    if not text:
-        raise ValueError(
-            "Gemini returned an empty SQL query."
-        )
 
-    return text
-
-def _conversation_text(
-    conversation_history: list[dict] | None
-) -> str:
-    """
-    Convert recent conversation history into a compact
-    text block for Gemini.
-    """
-
-    if not conversation_history:
-        return "No previous conversation."
-
-    # Keep only the most recent 6 messages
-    recent = conversation_history[-6:]
-
-    lines = []
-
-    for message in recent:
-
-        if not isinstance(message, dict):
-            continue
-
-        role = message.get("role")
-        text = message.get("text")
-
-        if role not in {"user", "assistant"}:
-            continue
-
-        if not isinstance(text, str):
-            continue
-
-        text = text.strip()
-
-        if not text:
-            continue
-
-        label = (
-            "User"
-            if role == "user"
-            else "Assistant"
-        )
-
-        lines.append(
-            f"{label}: {text}"
-        )
-
-    if not lines:
-        return "No previous conversation."
-
-    return "\n".join(lines)
-# ============================================================
-# GENERATE SQL WITH GEMINI
-# ============================================================
-
-def _generate_sql(
-    dataset: Dataset,
-    question: str,
-    conversation_history: list[dict] | None = None,
-) -> str:
-    schema = _schema_text(dataset)
-
-    conversation = _conversation_text(
-    conversation_history
-)
-
-    prompt = f"""
-You are the SQL engine for an AI Data Analyst application.
-
-The user uploaded a dataset stored in DuckDB.
-
-TABLE:
-main_table
-
-DATABASE SCHEMA:
-
-{schema}
-
-RECENT CONVERSATION:
-
-{conversation}
-
-CURRENT USER QUESTION:
-
-{question}
-
-TASK:
-Generate exactly ONE valid DuckDB SQL query that answers
-the user's question.
-
-RULES:
-
-1. Query only main_table.
-2. Use only columns present in the schema.
-3. The query must be read-only.
-4. SELECT queries are allowed.
-5. WITH ... SELECT queries are allowed.
-6. Return exactly one SQL statement.
-7. Use double quotes around column names.
-8. Never use INSERT.
-9. Never use UPDATE.
-10. Never use DELETE.
-11. Never use DROP.
-12. Never use ALTER.
-13. Never use CREATE.
-14. Never use TRUNCATE.
-15. Never use COPY.
-16. Never use ATTACH.
-17. Never use DETACH.
-18. Never use INSTALL.
-19. Never use LOAD.
-20. Never use CALL.
-21. Never use PRAGMA.
-22. Never use EXPORT.
-23. Never use IMPORT.
-24. Never use multiple SQL statements.
-25. Return SQL only.
-26. Do not use markdown.
-27. Do not explain your answer.
-
-SQL:
-"""
-
-    try:
-        interaction = client.interactions.create(
-            model=MODEL,
-            input=prompt,
-        )
-
-    except Exception as exc:
-        raise RuntimeError(
-            f"Gemini SQL generation failed: {exc}"
-        ) from exc
-
-    output_text = getattr(
-        interaction,
-        "output_text",
-        None,
-    )
-
-    if not output_text:
-        raise ValueError(
-            "Gemini did not return SQL."
-        )
-
-    return _clean_sql(
-        output_text
-    )
-# ============================================================
-# SQL VALIDATION
-# ============================================================
-
-def _validate_sql(sql: str) -> None:
-    """
-    Validate Gemini-generated SQL before executing it.
-
-    Only read-only SELECT/WITH queries against main_table
-    are allowed.
-    """
-
-    if not sql:
-        raise ValueError(
-            "Generated SQL is empty."
-        )
-
-    normalized = sql.strip().lower()
-
-    # --------------------------------------------------------
-    # Only SELECT or WITH queries are allowed
-    # --------------------------------------------------------
+def _is_read_only_sql(sql: str) -> bool:
+    """Reject unsafe SQL before execution."""
+    cleaned = _clean_sql(sql).lower()
 
     if not (
-        normalized.startswith("select")
-        or normalized.startswith("with")
+        cleaned.startswith("select")
+        or cleaned.startswith("with")
     ):
-        raise ValueError(
-            "Generated SQL must be a SELECT query."
-        )
-
-    # --------------------------------------------------------
-    # Block dangerous SQL operations
-    # --------------------------------------------------------
-
-    forbidden_keywords = [
-        "insert",
-        "update",
-        "delete",
-        "drop",
-        "alter",
-        "create",
-        "truncate",
-        "copy",
-        "attach",
-        "detach",
-        "install",
-        "load",
-        "call",
-        "pragma",
-        "export",
-        "import",
-    ]
-
-    for keyword in forbidden_keywords:
-
-        if re.search(
-            rf"\b{re.escape(keyword)}\b",
-            normalized,
-        ):
-            raise ValueError(
-                "Generated SQL contains "
-                f"forbidden operation: {keyword}"
-            )
-
-    # --------------------------------------------------------
-    # Prevent multiple SQL statements
-    # --------------------------------------------------------
-
-    statements = [
-        statement.strip()
-        for statement in sql.split(";")
-        if statement.strip()
-    ]
-
-    if len(statements) != 1:
-        raise ValueError(
-            "Only one SQL statement is allowed."
-        )
-
-    # --------------------------------------------------------
-    # Ensure the uploaded dataset is queried
-    # --------------------------------------------------------
-
-    if not re.search(
-        r"\bmain_table\b",
-        normalized,
-    ):
-        raise ValueError(
-            "Generated SQL must query main_table."
-        )
-
-
-# ============================================================
-# EXECUTE SQL
-# ============================================================
-
-def _execute_sql(
-    dataset: Dataset,
-    sql: str,
-):
-    """
-    Validate and execute Gemini-generated SQL
-    against the DuckDB dataset.
-    """
-
-    # Validate before execution.
-    _validate_sql(sql)
-
-    try:
-        result = dataset.con.execute(
-            sql
-        )
-
-    except Exception as exc:
-        raise RuntimeError(
-            "DuckDB could not execute the "
-            f"generated SQL: {exc}"
-        ) from exc
-
-    rows = result.fetchall()
-
-    columns = [
-        description[0]
-        for description in result.description
-    ]
-
-    return columns, rows
-
-# ============================================================
-# SERIALIZATION
-# ============================================================
-
-def _serialize_value(value: Any):
-    """
-    Convert DuckDB / NumPy / Pandas values into
-    JSON-friendly Python values.
-    """
-
-    if value is None:
-        return None
-
-    # Handle NumPy / Pandas scalar values
-    if hasattr(value, "item"):
-        try:
-            value = value.item()
-        except Exception:
-            pass
-
-    # Handle date / datetime values
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except Exception:
-            pass
-
-    # Handle bytes
-    if isinstance(value, bytes):
-        return value.decode(
-            "utf-8",
-            errors="replace",
-        )
-
-    return value
-
-
-def _serialize_rows(
-    columns,
-    rows,
-):
-    """
-    Convert database rows into dictionaries
-    suitable for a JSON response.
-    """
-
-    serialized = []
-
-    for row in rows:
-
-        item = {}
-
-        for index, column in enumerate(columns):
-
-            item[column] = _serialize_value(
-                row[index]
-            )
-
-        serialized.append(item)
-
-    return serialized
-
-
-# ============================================================
-# DISPLAY VALUE
-# ============================================================
-
-def _display_value(value):
-    """
-    Format a value for the final natural-language answer.
-    """
-
-    value = _serialize_value(value)
-
-    if value is None:
-        return "N/A"
-
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-
-    if isinstance(value, int):
-        return f"{value:,}"
-
-    if isinstance(value, float):
-
-        if value.is_integer():
-            return f"{int(value):,}"
-
-        return f"{value:,.2f}"
-
-    return str(value)
-
-
-# ============================================================
-# LOCAL ANSWER GENERATOR
-# ============================================================
-
-def _format_answer(
-    question: str,
-    columns,
-    rows,
-) -> str:
-    """
-    Convert SQL results into a human-readable answer.
-
-    This is intentionally local so that we don't need
-    a second Gemini API request.
-    """
-
-    # --------------------------------------------------------
-    # No results
-    # --------------------------------------------------------
-
-    if not rows:
-
-        return (
-            "I couldn't find any matching "
-            "results for that question."
-        )
-
-    # --------------------------------------------------------
-    # Single value
-    #
-    # Example:
-    # SELECT SUM("Sales") FROM main_table
-    # --------------------------------------------------------
-
-    if (
-        len(rows) == 1
-        and len(columns) == 1
-    ):
-
-        value = _display_value(
-            rows[0][0]
-        )
-
-        return (
-            f"The result is {value}."
-        )
-
-    # --------------------------------------------------------
-    # Single row with multiple columns
-    # --------------------------------------------------------
-
-    if len(rows) == 1:
-
-        parts = []
-
-        for index, column in enumerate(
-            columns
-        ):
-
-            value = _display_value(
-                rows[0][index]
-            )
-
-            parts.append(
-                f"{column}: {value}"
-            )
-
-        return (
-            "The result is "
-            + ", ".join(parts)
-            + "."
-        )
-
-    # --------------------------------------------------------
-    # Two-column grouped result
-    # --------------------------------------------------------
-
-    if len(columns) == 2:
-
-        items = []
-
-        for row in rows[:10]:
-
-            category = _display_value(
-                row[0]
-            )
-
-            value = _display_value(
-                row[1]
-            )
-
-            items.append(
-                f"{category}: {value}"
-            )
-
-        result_text = ", ".join(
-            items
-        )
-
-        if len(rows) > 10:
-
-            result_text += (
-                f", and {len(rows) - 10:,} "
-                "more results"
-            )
-
-        return (
-            f"Here are the results by "
-            f"{columns[0]}: "
-            f"{result_text}."
-        )
-
-    # --------------------------------------------------------
-    # Generic multi-row result
-    # --------------------------------------------------------
-
-    return (
-        f"I found {len(rows):,} results. "
-        f"The returned columns are: "
-        f"{', '.join(columns)}."
+        return False
+
+    forbidden = (
+        r"\b(insert|update|delete|drop|alter|create|truncate|"
+        r"copy|attach|detach|install|load|pragma)\b"
     )
-# ============================================================
-# VISUALIZATION SELECTION
-# ============================================================
 
-# ============================================================
-# VISUALIZATION SELECTION
-# ============================================================
+    return re.search(forbidden, cleaned) is None
 
-def _choose_visualization(
-    columns,
-    rows,
-) -> dict:
+
+# ============================================================================
+# Generic question understanding
+# ============================================================================
+
+_AGG_WORDS = {
+    "average": "AVG",
+    "avg": "AVG",
+    "mean": "AVG",
+    "sum": "SUM",
+    "total": "SUM",
+    "minimum": "MIN",
+    "lowest": "MIN",
+    "smallest": "MIN",
+    "maximum": "MAX",
+    "highest": "MAX",
+    "largest": "MAX",
+    "median": "MEDIAN",
+    "count": "COUNT",
+    "number": "COUNT",
+    "how many": "COUNT",
+}
+
+
+def _find_mentioned_columns(
+    question: str,
+    columns: list[str],
+) -> list[str]:
     """
-    Choose a visualization based on the SQL result.
+    Resolve all dataset columns explicitly mentioned in a question.
 
-    Supported frontend chart types:
-        - bar
-        - line
-        - scatter
-        - table
+    Important:
+    The returned columns preserve the order in which the columns
+    appear in the user's question rather than the order of the
+    dataset schema.
 
-    Pie charts are intentionally not returned because the current
-    AnalysisChart component does not render pie charts.
+    Examples:
+        "average Mathematics, Programming, and Data_Science"
+            -> ["Mathematics", "Programming", "Data_Science"]
+
+        "compare Revenue and Profit"
+            -> ["Revenue", "Profit"]
+
+    Matching is dataset-independent and supports:
+        - underscores vs spaces
+        - case differences
+        - multi-word column names
+        - arbitrary column names
     """
 
-    if not rows:
-        return {
-            "type": "table",
-            "x": None,
-            "y": None,
-            "title": None,
-        }
+    q = _norm(question)
 
-    if len(columns) == 1:
-        return {
-            "type": "table",
-            "x": None,
-            "y": columns[0],
-            "title": None,
-        }
+    if not q or not columns:
+        return []
 
-    if len(columns) == 2:
-        first_column = columns[0]
-        second_column = columns[1]
+    matches = []
 
-        first_values = [
-            row[0]
-            for row in rows
-            if row[0] is not None
-        ]
+    # Longer column names are matched first so that overlapping
+    # names do not incorrectly capture a shorter column.
+    candidates = sorted(
+        columns,
+        key=lambda value: len(_norm(value)),
+        reverse=True,
+    )
 
-        second_values = [
-            row[1]
-            for row in rows
-            if row[1] is not None
-        ]
+    for column in candidates:
+        normalized_column = _norm(column)
 
-        first_is_numeric = all(
-            isinstance(value, numbers.Number)
-            and not isinstance(value, bool)
-            for value in first_values
+        if not normalized_column:
+            continue
+
+        match = re.search(
+            r"(?<!\w)"
+            + re.escape(normalized_column)
+            + r"(?!\w)",
+            q,
+            re.IGNORECASE,
         )
 
-        second_is_numeric = all(
-            isinstance(value, numbers.Number)
-            and not isinstance(value, bool)
-            for value in second_values
+        if not match:
+            continue
+
+        matches.append(
+            (
+                match.start(),
+                match.end(),
+                column,
+            )
         )
 
-        first_is_text = any(
-            isinstance(value, str)
-            for value in first_values
+    if not matches:
+        return []
+
+    # Sort by where the column appears in the user's question.
+    matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+
+    # Prevent overlapping matches.
+    # Example:
+    #   "Data Science"
+    # should not also produce a shorter overlapping match.
+    selected = []
+    occupied = []
+
+    for start_pos, end_pos, column in matches:
+        overlaps = any(
+            start_pos < existing_end
+            and end_pos > existing_start
+            for existing_start, existing_end in occupied
         )
 
-        # Two numeric columns -> scatter.
-        if first_is_numeric and second_is_numeric:
-            return {
-                "type": "scatter",
-                "x": first_column,
-                "y": second_column,
-                "title": f"{first_column} vs {second_column}",
-            }
+        if overlaps:
+            continue
 
-        # Categorical + numeric -> bar.
-        if first_is_text and second_is_numeric:
-            return {
-                "type": "bar",
-                "x": first_column,
-                "y": second_column,
-                "title": f"{second_column} by {first_column}",
-            }
+        if column in selected:
+            continue
 
-        return {
-            "type": "table",
-            "x": None,
-            "y": None,
-            "title": None,
-        }
+        selected.append(column)
+        occupied.append((start_pos, end_pos))
 
-    return {
-        "type": "table",
-        "x": None,
-        "y": None,
-        "title": None,
+    return selected
+
+def _resolve_column(
+    text: str,
+    columns: list[str],
+    numeric_only: bool = False,
+    numeric: list[str] | None = None,
+) -> str | None:
+    q = _norm(text)
+
+    candidates = (
+        numeric
+        if numeric_only and numeric is not None
+        else columns
+    )
+
+    normalized = {
+        _norm(column): column
+        for column in candidates
     }
 
+    if q in normalized:
+        return normalized[q]
 
-def _choose_grouped_visualization(
-    question: str,
-    x_column: str,
-    y_column: str,
-    rows,
-) -> dict:
-    """
-    Choose a chart for grouped/business results based on the
-    user's question.
-    """
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    readable_y = y_column.replace("_", " ").title()
-    readable_x = x_column.replace("_", " ").title()
-
-    # Detect aggregation from the user's question
-    if any(word in q for word in ["average", "avg", "mean"]):
-        operation_name = "Average"
-
-    elif any(word in q for word in ["count", "number of", "how many"]):
-        operation_name = "Count"
-
-    elif any(word in q for word in [
-        "maximum",
-        "max",
-        "highest",
-        "largest",
-    ]):
-        operation_name = "Maximum"
-
-    elif any(word in q for word in [
-        "minimum",
-        "min",
-        "lowest", "bottom",
-        "smallest",
-    ]):
-        operation_name = "Minimum"
-
-    else:
-        operation_name = "Total"
-
-    if operation_name == "Count":
-        metric_label = "Count"
-    else:
-        metric_label = f"{operation_name} {readable_y}"
-
-    # Correlation / relationship questions -> scatter
-    scatter_words = [
-        "correlation",
-        "correlate",
-        "relationship",
-        "relation",
-        "versus",
-        " vs ",
-        "against",
-    ]
-
-    if any(word in q for word in scatter_words):
-        numeric_pairs = 0
-
-        for row in rows:
-            if len(row) < 2:
-                continue
-
-            left = row[0]
-            right = row[1]
-
-            if (
-                isinstance(left, numbers.Number)
-                and not isinstance(left, bool)
-                and isinstance(right, numbers.Number)
-                and not isinstance(right, bool)
-            ):
-                numeric_pairs += 1
-
-        if numeric_pairs > 0:
-            return {
-                "type": "scatter",
-                "x": x_column,
-                "y": y_column,
-                "title": f"{readable_y} vs {readable_x}",
-            }
-
-    # Distribution / part-to-whole -> pie
-    pie_words = [
-        "distribution",
-        "distribute",
-        "share",
-        "percentage of total",
-        "percent of total",
-        "proportion",
-        "composition",
-        "breakdown",
-        "split",
-        "contribution",
-        "contributes",
-        "revenue share",
-        "sales share",
-        "category share",
-        "regional share",
-    ]
-
-    if any(word in q for word in pie_words):
-        return {
-            "type": "pie",
-            "x": x_column,
-            "y": y_column,
-            "title": (
-                f"{metric_label} "
-                f"Distribution by {readable_x}"
-            ),
-        }
-
-    # Trend / time questions -> line
-    trend_words = [
-        "trend",
-        "over time",
-        "time series",
-        "monthly",
-        "weekly",
-        "daily",
-        "yearly",
-        "growth",
-        "change over time",
-        "historical",
-    ]
-
-    if any(word in q for word in trend_words):
-        return {
-            "type": "line",
-            "x": x_column,
-            "y": y_column,
-            "title": f"{metric_label} over time",
-        }
-
-    # Default grouped visualization -> bar
-    return {
-        "type": "bar",
-        "x": x_column,
-        "y": y_column,
-        "title": f"{metric_label} by {readable_x}",
-    }
-
-def _try_local_query(
-    dataset,
-    question: str,
-):
-    """
-    Handle simple analytical questions locally using DuckDB.
-
-    Returns:
-        dict -> if the question can be handled locally
-        None -> if Gemini should handle it
-    """
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # ROW COUNT
-    # --------------------------------------------------------
-
-    if (
-        "how many rows" in q
-        or "number of rows" in q
-        or "how many records" in q
-        or "number of records" in q
-        or "total records" in q
+    for name in sorted(
+        normalized,
+        key=len,
+        reverse=True,
     ):
+        if re.search(
+            r"(?<!\w)"
+            + re.escape(name)
+            + r"(?!\w)",
+            q,
+        ):
+            return normalized[name]
 
-        sql = """
-        SELECT COUNT(*) AS total_records
-        FROM main_table
-        """
+    q_tokens = set(q.split())
 
-        result = _execute_sql(
-            dataset,
-            sql,
+    best = None
+    best_score = 0.0
+
+    for name, original in normalized.items():
+        name_tokens = set(name.split())
+
+        if not name_tokens:
+            continue
+
+        score = (
+            len(q_tokens & name_tokens)
+            / len(name_tokens)
         )
 
-        columns, rows = result
+        if score > best_score and score >= 0.5:
+            best_score = score
+            best = original
 
-        answer = (
-            f"The dataset contains "
-            f"{rows[0][0]:,} records."
-        )
+    return best
 
-        return {
-            "question": question,
-            "type": "local_analysis",
-            "answer": answer,
-            "sql": sql.strip(),
-            "columns": columns,
-            "rows": _serialize_rows(
-                columns,
-                rows,
-            ),
-            "row_count": len(rows),
-            "model": "local",
-            "visualization": _choose_visualization(
-                columns,
-                rows,
-            ),
-        }
 
-    # --------------------------------------------------------
-    # COLUMN COUNT
-    # --------------------------------------------------------
+def _detect_aggregation(question: str) -> str | None:
+    q = _norm(question)
 
-    if (
-        "how many columns" in q
-        or "number of columns" in q
+    for phrase in sorted(
+        _AGG_WORDS,
+        key=len,
+        reverse=True,
     ):
-
-        sql = """
-        SELECT COUNT(*) AS total_columns
-        FROM information_schema.columns
-        WHERE table_name = 'main_table'
-        """
-
-        result = dataset.con.execute(sql)
-
-        rows = result.fetchall()
-        columns = [desc[0] for desc in result.description]
-
-        answer = (
-            f"The dataset contains "
-            f"{rows[0][0]:,} columns."
-        )
-
-        return {
-            "question": question,
-            "type": "local_analysis",
-            "answer": answer,
-            "sql": sql.strip(),
-            "columns": columns,
-            "rows": _serialize_rows(
-                columns,
-                rows,
-            ),
-            "row_count": len(rows),
-            "model": "local",
-            "visualization": _choose_visualization(
-                columns,
-                rows,
-            ),
-        }
-
-    # --------------------------------------------------------
-    # SHOW COLUMNS
-    # --------------------------------------------------------
-
-    if (
-        "show columns" in q
-        or "list columns" in q
-        or "what columns" in q
-        or "column names" in q
-    ):
-
-        columns = [
-            row[0]
-            for row in dataset.con.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'main_table'
-                ORDER BY ordinal_position
-                """
-            ).fetchall()
-        ]
-
-        rows = [
-            (column,)
-            for column in columns
-        ]
-
-        return {
-            "question": question,
-            "type": "local_analysis",
-            "answer": (
-                "The dataset contains the following columns: "
-                + ", ".join(columns)
-            ),
-            "sql": None,
-            "columns": ["column_name"],
-            "rows": _serialize_rows(
-                ["column_name"],
-                rows,
-            ),
-            "row_count": len(rows),
-            "model": "local",
-            "visualization": {
-                "type": "table",
-                "x": None,
-                "y": None,
-                "title": "Dataset Columns",
-            },
-        }
-
-    # --------------------------------------------------------
-    # SAMPLE DATA
-    # --------------------------------------------------------
-
-    if (
-        "show sample" in q
-        or "sample data" in q
-        or "show some rows" in q
-        or "show first rows" in q
-        or "show example rows" in q
-    ):
-
-        sql = """
-        SELECT *
-        FROM main_table
-        LIMIT 10
-        """
-
-        columns, rows = _execute_sql(
-            dataset,
-            sql,
-        )
-
-        return {
-            "question": question,
-            "type": "local_analysis",
-            "answer": "Here are the first 10 rows of the dataset.",
-            "sql": sql.strip(),
-            "columns": columns,
-            "rows": _serialize_rows(
-                columns,
-                rows,
-            ),
-            "row_count": len(rows),
-            "model": "local",
-            "visualization": {
-                "type": "table",
-                "x": None,
-                "y": None,
-                "title": "Sample Data",
-            },
-        }
-
-    # --------------------------------------------------------
-    # NOT HANDLED LOCALLY
-    # --------------------------------------------------------
+        if re.search(
+            r"(?<!\w)"
+            + re.escape(phrase)
+            + r"(?!\w)",
+            q,
+        ):
+            return _AGG_WORDS[phrase]
 
     return None
 
-# ============================================================
-# MAIN AI ANALYST
-# ============================================================
 
-import time
+def _detect_group_column(
+    question: str,
+    columns: list[str],
+) -> str | None:
+    """
+    Resolve an explicit or implicit grouping dimension.
 
-# ============================================================
-# LOCAL NUMERIC ANALYSIS
-# ============================================================
+    Explicit grouping examples:
+      - average CGPA by Department
+      - count for each Department
+      - average score per Class
+      - sales across Region
 
-# ============================================================
-# LOCAL NUMERIC ANALYSIS
-# ============================================================
-def _try_business_insight_query(
+    Implicit ranking examples:
+      - Which Department has the highest average CGPA?
+      - Which Region has the lowest average Profit?
+      - What Category has the highest average Score?
+
+    Simple metric questions such as:
+      - What is the average Percentage?
+      - What is the maximum Percentage?
+      - What is the minimum Percentage?
+      - What is the total of Total_Marks?
+
+    must NOT treat the metric column itself as a grouping column.
+    """
+    q = _norm(question)
+
+    # ------------------------------------------------------------
+    # Explicit SORT / ORDER grouping
+    # ------------------------------------------------------------
+    #
+    # Examples:
+    #   Sort Departments by average Percentage
+    #   Sort Departments by average Percentage descending
+    #   Order Departments by total Sales
+    #
+    # Structure:
+    #   SORT <GROUP> BY <AGGREGATION> <METRIC>
+    #
+    # This must be handled before the generic "by ..." parser.
+    # ------------------------------------------------------------
+    sort_match = re.search(
+        r"\b(?:sort|order|rank)\s+(.+?)\s+by\s+"
+        r"(?:average|avg|mean|sum|total|maximum|max|minimum|min|median)\s+"
+        r"(.+?)(?:\s+(?:in\s+)?(?:ascending|descending|asc|desc)\b|[?.!,]|$)",
+        q,
+        re.IGNORECASE,
+    )
+
+    if sort_match:
+        group_text = sort_match.group(1).strip()
+
+        # Exact resolution.
+        resolved = _resolve_column(
+            group_text,
+            columns,
+        )
+
+        if resolved:
+            return resolved
+
+        # Generic plural -> singular.
+        if group_text.lower().endswith("s"):
+            singular = group_text[:-1].strip()
+
+            resolved = _resolve_column(
+                singular,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+        # Common English pluralization:
+        # categories -> category
+        # companies -> company
+        if group_text.lower().endswith("ies"):
+            singular = group_text[:-3] + "y"
+
+            resolved = _resolve_column(
+                singular,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+        # Try progressively shorter candidates.
+        words = group_text.split()
+
+        for end in range(len(words) - 1, 0, -1):
+            candidate = " ".join(words[:end]).strip()
+
+            resolved = _resolve_column(
+                candidate,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+            if candidate.lower().endswith("s"):
+                singular = candidate[:-1].strip()
+
+                resolved = _resolve_column(
+                    singular,
+                    columns,
+                )
+
+                if resolved:
+                    return resolved
+
+            if candidate.lower().endswith("ies"):
+                singular = candidate[:-3] + "y"
+
+                resolved = _resolve_column(
+                    singular,
+                    columns,
+                )
+
+                if resolved:
+                    return resolved
+
+
+    # ------------------------------------------------------------
+    # 0. Explicit TOP/BOTTOM N ranking dimension
+    # ------------------------------------------------------------
+    #
+    # This MUST run before the generic "by ..." grouping detector.
+    #
+    # Example:
+    #   top 3 Departments by average Percentage
+    #
+    # The generic "by" pattern would otherwise interpret
+    # "average Percentage" as the grouping column.
+    # ------------------------------------------------------------
+    top_bottom_match = re.search(
+        r"\b(?:top|bottom)\s+\d+\s+(.+?)\s+by\b",
+        q,
+        re.IGNORECASE,
+    )
+
+    if top_bottom_match:
+        candidate_text = top_bottom_match.group(1).strip()
+
+        # Exact resolution first.
+        resolved = _resolve_column(
+            candidate_text,
+            columns,
+        )
+
+        if resolved:
+            return resolved
+
+        # Generic plural -> singular resolution.
+        if candidate_text.lower().endswith("s"):
+            singular = candidate_text[:-1].strip()
+
+            resolved = _resolve_column(
+                singular,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+        # Try progressively shorter candidates.
+        words = candidate_text.split()
+
+        for end in range(len(words) - 1, 0, -1):
+            candidate = " ".join(words[:end]).strip()
+
+            resolved = _resolve_column(
+                candidate,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+            if candidate.lower().endswith("s"):
+                singular = candidate[:-1].strip()
+
+                resolved = _resolve_column(
+                    singular,
+                    columns,
+                )
+
+                if resolved:
+                    return resolved
+
+    # ------------------------------------------------------------
+    # 1. Explicit grouping phrases
+    # ------------------------------------------------------------
+    patterns = [
+        r"\bby\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
+        r"\bfor each\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
+        r"\beach\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
+        r"\bper\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
+        r"\bacross\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            q,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            candidate = match.group(1).strip()
+            column = _resolve_column(
+                candidate,
+                columns,
+            )
+
+            if column:
+                return column
+
+    # ------------------------------------------------------------
+    # 2. Implicit grouping for ranking/comparison questions
+    # ------------------------------------------------------------
+    #
+    # IMPORTANT:
+    # "What is the average Percentage?"
+    # must NOT become GROUP = Percentage.
+    #
+    # But:
+    # "Which Department has the highest average Percentage?"
+    # should become GROUP = Department.
+    #
+    # Therefore "what" or "which" alone is insufficient. We require
+    # actual ranking/comparison language as well.
+    # ------------------------------------------------------------
+    ranking_words = (
+        "highest",
+        "lowest",
+        "largest",
+        "smallest",
+        "top",
+        "bottom",
+        "leading",
+        "best",
+        "worst",
+        "most",
+        "least",
+        "ranked",
+        "ranking",
+        "rank",
+    )
+
+    has_ranking_language = any(
+        word in q
+        for word in ranking_words
+    )
+
+    if has_ranking_language:
+
+        # --------------------------------------------------------
+        # Explicit TOP/BOTTOM N dimension
+        # --------------------------------------------------------
+        #
+        # Examples:
+        #   top 3 Departments by average Percentage
+        #   bottom 3 Departments by average Percentage
+        #   top 5 Regions by total Revenue
+        #   bottom 10 Products by average Rating
+        #
+        # Resolve the grouping dimension directly from the text
+        # instead of relying on mention ordering.
+        # --------------------------------------------------------
+        top_bottom_match = re.search(
+            r"\b(?:top|bottom)\s+\d+\s+(.+?)\s+by\b",
+            q,
+            re.IGNORECASE,
+        )
+
+        if top_bottom_match:
+            candidate_text = top_bottom_match.group(1).strip()
+
+            # First try the complete candidate.
+            resolved = _resolve_column(
+                candidate_text,
+                columns,
+            )
+
+            if resolved:
+                return resolved
+
+            # Then progressively shorten the candidate.
+            # This handles phrases such as:
+            #   "student departments"
+            #   "sales regions"
+            candidate_words = candidate_text.split()
+
+            for end in range(len(candidate_words), 0, -1):
+                candidate = " ".join(candidate_words[:end]).strip()
+
+                resolved = _resolve_column(
+                    candidate,
+                    columns,
+                )
+
+                if resolved:
+                    return resolved
+
+                # Handle simple plural forms.
+                if candidate.lower().endswith("s"):
+                    singular = candidate[:-1].strip()
+
+                    resolved = _resolve_column(
+                        singular,
+                        columns,
+                    )
+
+                    if resolved:
+                        return resolved
+
+        mentioned = _find_mentioned_columns(
+            q,
+            columns,
+        )
+
+        if mentioned:
+            # Prefer a non-numeric/dimension column as the grouping
+            # column when the question contains both a dimension and
+            # a numeric metric.
+            # In ranking questions, the grouping dimension is normally
+            # the column associated with "which/what/top/bottom", while
+            # the numeric metric is associated with average/sum/etc.
+            # Prefer the first column that appears before the metric
+            # when the question explicitly names a dimension.
+            for column in mentioned:
+                readable = str(column).lower().replace("_", " ")
+                ranking_patterns = (
+                    rf"\bwhich\s+(?:the\s+)?{re.escape(readable)}\b",
+                    rf"\bwhat\s+(?:the\s+)?{re.escape(readable)}\b",
+                    rf"\btop(?:\s+\d+)?\s+{re.escape(readable)}s?\b",
+                    rf"\bbottom(?:\s+\d+)?\s+{re.escape(readable)}s?\b",
+                    rf"\bhighest\s+{re.escape(readable)}s?\b",
+                    rf"\blowest\s+{re.escape(readable)}s?\b",
+                )
+
+                if any(
+                    re.search(pattern, q, re.IGNORECASE)
+                    for pattern in ranking_patterns
+                ):
+                    return column
+
+            # Generic TOP/BOTTOM ranking:
+            # resolve the dimension that appears after the ranking
+            # keyword, optionally after an integer.
+            #
+            # Examples:
+            #   top 3 Departments by average Percentage
+            #   bottom 5 Regions by total Revenue
+            #   top Categories by average Score
+            ranking_dimension_pattern = re.compile(
+                r"\b(?:top|bottom)\s+(?:\d+\s+)?(.+?)(?:\s+by\s+|\s+with\s+|\s+where\s+|$)",
+                re.IGNORECASE,
+            )
+
+            ranking_match = ranking_dimension_pattern.search(q)
+
+            if ranking_match:
+                candidate_text = ranking_match.group(1).strip()
+
+                # Try the complete candidate first.
+                resolved = _resolve_column(
+                    candidate_text,
+                    columns,
+                )
+
+                if resolved:
+                    return resolved
+
+                # Candidate may contain a pluralized column name.
+                candidate_words = candidate_text.split()
+
+                for end in range(len(candidate_words), 0, -1):
+                    candidate = " ".join(candidate_words[:end]).strip()
+
+                    resolved = _resolve_column(
+                        candidate,
+                        columns,
+                    )
+
+                    if resolved:
+                        return resolved
+
+                    # Remove a trailing plural 's'.
+                    singular = candidate[:-1] if candidate.endswith("s") else candidate
+
+                    resolved = _resolve_column(
+                        singular,
+                        columns,
+                    )
+
+                    if resolved:
+                        return resolved
+
+            # Generic ranking fallback:
+            # prefer non-numeric columns over numeric metric columns.
+            non_numeric = [
+                column
+                for column in mentioned
+                if column not in numeric
+            ]
+
+            if non_numeric:
+                return non_numeric[0]
+
+            return mentioned[0]
+
+    return None
+
+def _detect_metric_column(
+    question: str,
+    columns: list[str],
+    numeric: list[str],
+    exclude: str | None = None,
+) -> str | None:
+    mentioned = _find_mentioned_columns(
+        question,
+        columns,
+    )
+
+    for column in mentioned:
+        if (
+            column != exclude
+            and column in numeric
+        ):
+            return column
+
+    # Safe fallback only when there is exactly one numeric column.
+    if len(numeric) == 1 and any(
+        marker in _norm(question)
+        for marker in (
+            "average",
+            "avg",
+            "mean",
+            "sum",
+            "total",
+            "highest",
+            "lowest",
+            "maximum",
+            "minimum",
+            "median",
+            "top",
+            "bottom",
+        )
+    ):
+        return numeric[0]
+
+    return None
+
+
+def _try_comparison_query(
     dataset: Dataset,
     question: str,
 ) -> dict | None:
     """
-    Handles business-oriented questions such as:
+    Dedicated comparison entry point.
 
-        Which region has the highest sales?
-        Which region has the lowest sales?
-        Which product generated the most revenue?
-        What is the top product by revenue?
-        What is the best-performing region?
+    The comparison implementation currently lives inside
+    _try_local_query(). This wrapper exposes all valid
+    comparison_analysis results to AnalystAgent.
     """
 
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # Detect ranking / comparison intent
-    # --------------------------------------------------------
-
-    highest_words = [
-        "highest",
-        "maximum",
-        "max",
-        "largest",
-        "top",
-        "best",
-        "most",
-        "ranked",
-        "ranking",
-        "rank",
-    ]
-
-    lowest_words = [
-        "lowest", "bottom",
-        "minimum",
-        "min",
-        "smallest",
-        "worst",
-        "least",
-    ]
-
-    is_highest = any(word in q for word in highest_words)
-    is_lowest = any(word in q for word in lowest_words)
-
-    print("BUSINESS FLAGS:", is_highest, is_lowest)
-
-    if not is_highest and not is_lowest:
-        return None
-
-    # Explicit top-N / bottom-N requests must return N rows rather than
-    # falling through to the single-winner business insight behavior.
-    top_n_match = re.search(r"\b(?:top|bottom)\s+(\d+)\b", q)
-
-    is_rank_request = any(
-        word in q
-        for word in ["ranked", "ranking", "rank"]
+    result = _try_local_query(
+        dataset,
+        question,
     )
 
-    if top_n_match:
-        requested_n = int(top_n_match.group(1))
-        requested_n = max(1, min(requested_n, 50))
-    elif is_rank_request:
-        requested_n = None
-    else:
-        requested_n = 1
-
-    # --------------------------------------------------------
-    # Get columns
-    # --------------------------------------------------------
-
-    schema_rows = dataset.con.execute(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'main_table'
-        ORDER BY ordinal_position
-        """
-    ).fetchall()
-
-    if not schema_rows:
+    if not result:
         return None
 
-    columns = [
-        row[0]
-        for row in schema_rows
-    ]
+    # _try_local_query() uses the canonical comparison
+    # result type "comparison_analysis".
+    if result.get("type") == "comparison_analysis":
+        return result
 
-    # --------------------------------------------------------
-    # Find grouping dimension
-    # --------------------------------------------------------
+    return None
 
-    group_column = None
+# Local analysis engines
+# ============================================================================
 
-    if "region" in q and "region" in columns:
-        group_column = "region"
-
-    elif "product" in q and "product" in columns:
-        group_column = "product"
-
-    elif (
-        "area" in q
-        and "region" in columns
-    ):
-        group_column = "region"
-
-    elif (
-        "location" in q
-        and "region" in columns
-    ):
-        group_column = "region"
-
-    elif (
-        "category" in q
-        and "product" in columns
-    ):
-        group_column = "product"
-
-    if group_column is None:
-        return None
-
-    # --------------------------------------------------------
-    # Find metric
-    # --------------------------------------------------------
-
-    metric_aliases = {
-        "sales": "revenue",
-        "sale": "revenue",
-        "revenue": "revenue",
-        "units": "units_sold",
-        "units sold": "units_sold",
-        "price": "unit_price",
-        "marketing": "marketing_spend",
-        "marketing spend": "marketing_spend",
-        "rating": "customer_rating",
-        "customer rating": "customer_rating",
-        "returns": "returns",
-    }
-
-    metric_column = None
-
-    for phrase, actual_column in metric_aliases.items():
-
-        if (
-            phrase in q
-            and actual_column in columns
-        ):
-            metric_column = actual_column
-            break
-
-    if metric_column is None:
-        return None
-
-    # --------------------------------------------------------
-    # Determine aggregation
-    # --------------------------------------------------------
-
-    if any(
-        word in q
-        for word in ["average", "avg", "mean"]
-    ):
-        aggregation = "AVG"
-        aggregation_label = "average"
-
-    elif any(
-        word in q
-        for word in ["count", "number of", "how many"]
-    ):
-        aggregation = "COUNT"
-        aggregation_label = "count"
-
-    elif any(
-        word in q
-        for word in ["maximum", "max", "highest", "largest"]
-    ):
-        aggregation = "MAX"
-        aggregation_label = "maximum"
-
-    elif any(
-        word in q
-        for word in ["minimum", "min", "lowest", "bottom", "smallest"]
-    ):
-        aggregation = "MIN"
-        aggregation_label = "minimum"
-
-    else:
-        aggregation = "SUM"
-        aggregation_label = "total"
-
-    # --------------------------------------------------------
-    # Build SQL
-    # --------------------------------------------------------
-
-    group_identifier = (
-        '"'
-        + group_column.replace('"', '""')
-        + '"'
-    )
-
-    metric_identifier = (
-        '"'
-        + metric_column.replace('"', '""')
-        + '"'
-    )
-
-    if is_lowest and not is_highest:
-
-        order = "ASC"
-        direction_text = "lowest"
-
-    else:
-
-        order = "DESC"
-        direction_text = "highest"
-
-    limit_clause = (
-        f"LIMIT {requested_n}"
-        if requested_n is not None
-        else ""
-    )
-
-    if aggregation == "COUNT":
-        aggregate_expression = f'COUNT({metric_identifier})'
-    else:
-        aggregate_expression = (
-            f'{aggregation}('
-            f'TRY_CAST({metric_identifier} AS DOUBLE)'
-            f')'
-        )
-
-    sql = f"""
-    SELECT
-        {group_identifier} AS "{group_column}",
-        {aggregate_expression} AS "{metric_column}"
-    FROM main_table
-    GROUP BY {group_identifier}
-    ORDER BY "{metric_column}" {order}
-    {limit_clause}
+def _try_local_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
     """
+    Handle simple dataset-independent questions:
+      - total row count
+      - column listing
+      - AVG/SUM/MIN/MAX/MEDIAN/COUNT
+      - correlation between two numeric columns
+    """
+    q = _norm(question)
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
 
-    # --------------------------------------------------------
-    # Execute
-    # --------------------------------------------------------
+    if not columns:
+        return None
 
-    try:
+    # ------------------------------------------------------------
+    # Total number of records
+    # ------------------------------------------------------------
+    if re.search(
+        r"\b(how many|number of|count)\b.*"
+        r"\b(students|records|rows|observations|entries|"
+        r"people|items|samples|data|users|customers)\b",
+        q,
+    ):
+        sql = """
+            SELECT COUNT(*) AS count
+            FROM main_table
+        """
 
-        result_columns, rows = _execute_sql(
+        result_columns, rows = _execute(
             dataset,
             sql,
         )
 
-    except Exception as exc:
-
-        print(
-            "Business insight query failed:",
-            repr(exc),
+        count = (
+            int(rows[0]["count"])
+            if rows and rows[0]["count"] is not None
+            else 0
         )
 
-        return None
-
-    if not rows:
-        return None
-
-    # --------------------------------------------------------
-    # Extract result
-    # --------------------------------------------------------
-
-    readable_metric = metric_column.replace(
-        "_",
-        " ",
-    )
-
-    readable_group = group_column.replace(
-        "_",
-        " ",
-    )
-
-    # --------------------------------------------------------
-    # Natural-language answer
-    # --------------------------------------------------------
-
-    if is_rank_request or (requested_n is not None and requested_n > 1):
-        ranked_lines = []
-        for index, row in enumerate(rows, start=1):
-            group_value = _display_value(row[0])
-            metric_value = _display_value(row[1])
-            ranked_lines.append(
-                f"{index}. {group_value}: {metric_value}"
-            )
-
-        ranking_metric_label = (
-            f"{aggregation_label} {readable_metric}"
-            if aggregation != "SUM"
-            else readable_metric
-        )
-
-        answer = (
-            f"{'Ranked' if is_rank_request else direction_text.title()} {len(rows)} {readable_group}s "
-            f"by {ranking_metric_label}:\n"
-            + "\n".join(ranked_lines)
-        )
-    else:
-        group_value = _display_value(rows[0][0])
-        metric_value = _display_value(rows[0][1])
-        answer = (
-            f"{group_value} has the {direction_text} "
-            f"total {readable_metric} among all "
-            f"{readable_group}s, with "
-            f"{metric_value}."
-        )
-
-    # --------------------------------------------------------
-    # Visualization
-    # --------------------------------------------------------
-
-    visualization_metric_label = (
-        f"{aggregation_label} {readable_metric}"
-        if aggregation != "SUM"
-        else readable_metric
-    )
-
-    if is_rank_request:
-        visualization_title = (
-            f"{visualization_metric_label.title()} ranked by "
-            f"{readable_group}"
-        )
-    elif is_lowest:
-        visualization_title = (
-            f"Bottom {requested_n} {readable_group}s by "
-            f"{visualization_metric_label}"
-        )
-    else:
-        visualization_title = (
-            f"Top {requested_n} {readable_group}s by "
-            f"{visualization_metric_label}"
-        )
-
-    visualization = {
-        "type": "bar",
-        "x": group_column,
-        "y": metric_column,
-        "y_label": visualization_metric_label,
-        "title": visualization_title,
-    }
-    # --------------------------------------------------------
-    # Return
-    # --------------------------------------------------------
-
-    return {
-        "question": question,
-        "type": "business_insight",
-        "answer": answer,
-        "sql": sql.strip(),
-        "columns": result_columns,
-        "rows": _serialize_rows(
+        return _base_result(
+            question,
+            "local_query",
+            f"There are {count:,} records in the dataset.",
+            sql,
             result_columns,
             rows,
-        ),
-        "row_count": len(rows),
-        "model": "local",
-        "visualization": visualization,
+            {
+                "type": "metric",
+                "x": "",
+                "y": "count",
+                "title": "Record Count",
+            },
+        )
+
+    # ------------------------------------------------------------
+    # Column listing
+    # ------------------------------------------------------------
+    if any(
+        phrase in q
+        for phrase in (
+            "how many columns",
+            "number of columns",
+            "what columns",
+            "list the columns",
+            "column names",
+        )
+    ):
+        sql = """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'main_table'
+            ORDER BY ordinal_position
+        """
+
+        result_columns, rows = _execute(
+            dataset,
+            sql,
+        )
+
+        answer = (
+            f"The dataset has {len(rows)} columns: "
+            + ", ".join(
+                str(row["column_name"])
+                for row in rows
+            )
+            + "."
+        )
+
+        return _base_result(
+            question,
+            "dataset_overview",
+            answer,
+            sql,
+            result_columns,
+            rows,
+        )
+
+    # ------------------------------------------------------------
+    # Generic multi-column comparison
+    # ------------------------------------------------------------
+    # Handles questions such as:
+    #   Compare Mathematics and Programming
+    #   Which has the higher average, Mathematics or Programming?
+    #   What is the difference between the average of Revenue and Profit?
+    #
+    # This is completely dataset-agnostic. The mentioned numeric
+    # columns are resolved dynamically from the dataset schema.
+    # ------------------------------------------------------------
+
+    comparison_language = any(
+        phrase in q
+        for phrase in (
+            "compare",
+            "comparison",
+            "difference between",
+            "difference of",
+            "higher",
+            "lower",
+            "greater",
+            "less",
+            "which has",
+            "which is higher",
+            "which is lower",
+            "ratio",
+            "percentage higher",
+            "percentage lower",
+            "percentage difference",
+            "percent higher",
+            "percent lower",
+            "percent difference",
+            "how many times",
+            "times as much",
+            "times higher",
+        )
+    )
+
+    if comparison_language:
+        # Remove comparison-language phrases before resolving columns.
+        # This prevents words such as "percentage" in
+        # "percentage higher" from being mistaken for an actual
+        # dataset column named "Percentage".
+        comparison_column_text = q
+
+        comparison_phrases = (
+            "percentage higher",
+            "percentage lower",
+            "percentage difference",
+            "percent higher",
+            "percent lower",
+            "percent difference",
+            "% higher",
+            "% lower",
+            "how many times",
+            "times as much",
+            "times higher",
+            "difference between",
+            "difference of",
+        )
+
+        for phrase in comparison_phrases:
+            comparison_column_text = comparison_column_text.replace(
+                phrase,
+                " ",
+            )
+
+        mentioned_numeric = [
+            column
+            for column in _find_mentioned_columns(
+                comparison_column_text,
+                columns,
+            )
+            if column in numeric
+        ]
+
+        # Comparison requires at least two explicitly mentioned
+        # numeric columns.
+        if len(mentioned_numeric) >= 2:
+
+            # Resolve the requested aggregation.
+            comparison_aggregation = _detect_aggregation(q)
+
+            # "Compare X and Y" has no explicit aggregation, so
+            # average is the natural statistical comparison.
+            if comparison_aggregation in (None, "COUNT"):
+                comparison_aggregation = "AVG"
+
+            # Only use supported numeric aggregations.
+            if comparison_aggregation not in (
+                "AVG",
+                "SUM",
+                "MIN",
+                "MAX",
+                "MEDIAN",
+            ):
+                comparison_aggregation = "AVG"
+
+            aliases = []
+            expressions = []
+
+            for metric_column in mentioned_numeric:
+                readable_metric = _readable(metric_column)
+
+                safe_name = re.sub(
+                    r"[^a-zA-Z0-9]+",
+                    "_",
+                    readable_metric,
+                ).strip("_").lower()
+
+                alias = (
+                    f"{comparison_aggregation.lower()}_{safe_name}"
+                )
+
+                base_alias = alias
+                suffix = 2
+
+                while alias in aliases:
+                    alias = f"{base_alias}_{suffix}"
+                    suffix += 1
+
+                aliases.append(alias)
+
+                expressions.append(
+                    f"{comparison_aggregation}("
+                    f"TRY_CAST({_q(metric_column)} AS DOUBLE)"
+                    f") AS {_q(alias)}"
+                )
+
+            sql = (
+                "SELECT "
+                + ", ".join(expressions)
+                + " FROM main_table"
+            )
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            if rows:
+                row = rows[0]
+
+                values = []
+
+                for metric_column, alias in zip(
+                    mentioned_numeric,
+                    aliases,
+                ):
+                    value = row.get(alias)
+
+                    if value is None:
+                        continue
+
+                    try:
+                        value_float = float(value)
+                    except (TypeError, ValueError):
+                        continue
+
+                    values.append(
+                        (
+                            metric_column,
+                            value_float,
+                        )
+                    )
+
+                if len(values) >= 2:
+
+                    label = {
+                        "AVG": "average",
+                        "SUM": "sum",
+                        "MIN": "minimum",
+                        "MAX": "maximum",
+                        "MEDIAN": "median",
+                    }.get(
+                        comparison_aggregation,
+                        comparison_aggregation.lower(),
+                    )
+
+                    # ------------------------------------------------
+                    # Derived comparison analysis
+                    # ------------------------------------------------
+                    #
+                    # Derived comparisons use the semantic order expressed
+                    # in the question rather than relying only on the
+                    # column-resolution order.
+                    #
+                    # Examples:
+                    #   Programming to Mathematics
+                    #       -> Programming / Mathematics
+                    #
+                    #   Programming percentage higher than Mathematics
+                    #       -> (Programming - Mathematics) / Mathematics
+                    #
+                    #   Mathematics percentage lower than Programming
+                    #       -> (Programming - Mathematics) / Programming
+                    # ------------------------------------------------
+
+                    answer = None
+
+                    if len(values) == 2:
+                        value_map = {
+                            name: value
+                            for name, value in values
+                        }
+
+                        semantic_values = values
+
+                        # Try to preserve the explicit "X to Y",
+                        # "X than Y", or "X compared with Y" ordering.
+                        #
+                        # We use the positions of the resolved column names
+                        # inside the normalized question so that the order
+                        # follows the user's wording.
+                        ordered_mentions = []
+
+                        for name, value in values:
+                            normalized_name = _norm(name)
+
+                            match = re.search(
+                                r"(?<!\\w)"
+                                + re.escape(normalized_name)
+                                + r"(?!\\w)",
+                                q,
+                                re.IGNORECASE,
+                            )
+
+                            if match:
+                                ordered_mentions.append(
+                                    (
+                                        match.start(),
+                                        name,
+                                        value,
+                                    )
+                                )
+
+                        if len(ordered_mentions) >= 2:
+                            ordered_mentions.sort(
+                                key=lambda item: item[0]
+                            )
+
+                            semantic_values = [
+                                (item[1], item[2])
+                                for item in ordered_mentions[:2]
+                            ]
+
+                        first_name, first_value = semantic_values[0]
+                        second_name, second_value = semantic_values[1]
+
+                        asks_ratio = any(
+                            phrase in q
+                            for phrase in (
+                                "ratio",
+                                "times as much",
+                                "times higher",
+                                "how many times",
+                            )
+                        )
+
+                        asks_percentage_higher = any(
+                            phrase in q
+                            for phrase in (
+                                "percentage higher",
+                                "percent higher",
+                                "% higher",
+                            )
+                        )
+
+                        asks_percentage_lower = any(
+                            phrase in q
+                            for phrase in (
+                                "percentage lower",
+                                "percent lower",
+                                "% lower",
+                            )
+                        )
+
+                        asks_percentage_difference = any(
+                            phrase in q
+                            for phrase in (
+                                "percentage difference",
+                                "percent difference",
+                            )
+                        )
+
+                        difference_requested = (
+                            "difference between" in q
+                            or "difference of" in q
+                        )
+
+                        if asks_ratio:
+                            if second_value != 0:
+                                ratio = first_value / second_value
+
+                                answer = (
+                                    f"The ratio of "
+                                    f"{_readable(first_name)} to "
+                                    f"{_readable(second_name)} is "
+                                    f"{ratio:,.2f}."
+                                )
+                            else:
+                                answer = (
+                                    f"The ratio cannot be calculated "
+                                    f"because {_readable(second_name)} "
+                                    f"has a value of zero."
+                                )
+
+                        elif asks_percentage_higher:
+                            if second_value != 0:
+                                percentage = (
+                                    (first_value - second_value)
+                                    / abs(second_value)
+                                ) * 100
+
+                                if percentage >= 0:
+                                    answer = (
+                                        f"{_readable(first_name)} is "
+                                        f"{percentage:,.2f}% higher than "
+                                        f"{_readable(second_name)}."
+                                    )
+                                else:
+                                    answer = (
+                                        f"{_readable(first_name)} is "
+                                        f"{abs(percentage):,.2f}% lower than "
+                                        f"{_readable(second_name)}."
+                                    )
+                            else:
+                                answer = (
+                                    f"The percentage comparison cannot "
+                                    f"be calculated because "
+                                    f"{_readable(second_name)} "
+                                    f"has a value of zero."
+                                )
+
+                        elif asks_percentage_lower:
+                            if first_value != 0:
+                                percentage = (
+                                    (second_value - first_value)
+                                    / abs(first_value)
+                                ) * 100
+
+                                if percentage >= 0:
+                                    answer = (
+                                        f"{_readable(first_name)} is "
+                                        f"{percentage:,.2f}% lower than "
+                                        f"{_readable(second_name)}."
+                                    )
+                                else:
+                                    answer = (
+                                        f"{_readable(first_name)} is "
+                                        f"{abs(percentage):,.2f}% higher than "
+                                        f"{_readable(second_name)}."
+                                    )
+                            else:
+                                answer = (
+                                    f"The percentage comparison cannot "
+                                    f"be calculated because "
+                                    f"{_readable(first_name)} "
+                                    f"has a value of zero."
+                                )
+
+                        elif asks_percentage_difference:
+                            denominator = (
+                                abs(first_value) + abs(second_value)
+                            ) / 2
+
+                            if denominator != 0:
+                                percentage = (
+                                    abs(first_value - second_value)
+                                    / denominator
+                                ) * 100
+
+                                answer = (
+                                    f"The percentage difference between "
+                                    f"{_readable(first_name)} and "
+                                    f"{_readable(second_name)} is "
+                                    f"{percentage:,.2f}%."
+                                )
+                            else:
+                                answer = (
+                                    f"The percentage difference cannot "
+                                    f"be calculated because both values "
+                                    f"are zero."
+                                )
+
+                        elif difference_requested:
+                            difference = abs(
+                                first_value - second_value
+                            )
+
+                            answer = (
+                                f"The difference between the "
+                                f"{label} of "
+                                f"{_readable(first_name)} and "
+                                f"{_readable(second_name)} is "
+                                f"{difference:,.2f}."
+                            )
+
+                    if answer is None:
+                        parts = [
+                            f"{_readable(name)}: {value:,.2f}"
+                            for name, value in values
+                        ]
+
+                        answer = (
+                            f"The {label} comparison is: "
+                            + "; ".join(parts)
+                            + "."
+                        )
+
+                        asks_for_winner = any(
+                            phrase in q
+                            for phrase in (
+                                "higher",
+                                "lower",
+                                "greater",
+                                "less",
+                                "which has",
+                                "which is higher",
+                                "which is lower",
+                            )
+                        )
+
+                        if asks_for_winner:
+                            highest = max(
+                                values,
+                                key=lambda item: item[1],
+                            )
+                            lowest = min(
+                                values,
+                                key=lambda item: item[1],
+                            )
+
+                            asks_lower = any(
+                                phrase in q
+                                for phrase in (
+                                    "lower",
+                                    "less",
+                                    "smallest",
+                                    "lowest",
+                                )
+                            )
+
+                            asks_higher = any(
+                                phrase in q
+                                for phrase in (
+                                    "higher",
+                                    "greater",
+                                    "largest",
+                                    "highest",
+                                )
+                            )
+
+                            if asks_lower and not asks_higher:
+                                answer = (
+                                    f"The lower {label} is "
+                                    f"{_readable(lowest[0])} "
+                                    f"at {lowest[1]:,.2f}."
+                                )
+
+                            elif asks_higher and not asks_lower:
+                                answer = (
+                                    f"The higher {label} is "
+                                    f"{_readable(highest[0])} "
+                                    f"at {highest[1]:,.2f}."
+                                )
+
+                            else:
+                                answer = (
+                                    f"The highest {label} is "
+                                    f"{_readable(highest[0])} "
+                                    f"at {highest[1]:,.2f}, "
+                                    f"while the lowest is "
+                                    f"{_readable(lowest[0])} "
+                                    f"at {lowest[1]:,.2f}."
+                                )
+
+                    return _base_result(
+                        question,
+                        "comparison_analysis",
+                        answer,
+                        sql,
+                        result_columns,
+                        rows,
+                        {
+                            "type": "comparison",
+                            "x": "",
+                            "y": aliases,
+                            "title": (
+                                f"{label.title()} "
+                                "Comparison"
+                            ),
+                        },
+                    )
+
+    # ------------------------------------------------------------
+    # Single-column aggregation
+    # ------------------------------------------------------------
+    aggregation = _detect_aggregation(q)
+    # ------------------------------------------------------------
+    # Multi-column aggregation
+    # ------------------------------------------------------------
+    #
+    # Examples:
+    #   What is the average of Mathematics, Programming, and Data_Science?
+    #   What is the sum of Revenue, Profit, and Cost?
+    #   Give me the maximum of Sales and Revenue.
+    #
+    # Resolve every explicitly mentioned numeric column and aggregate
+    # them independently. This is dataset-agnostic.
+    # ------------------------------------------------------------
+
+    if aggregation:
+        mentioned_numeric = [
+            column
+            for column in _find_mentioned_columns(
+                q,
+                columns,
+            )
+            if column in numeric
+        ]
+
+        group_column = _detect_group_column(
+            q,
+            columns,
+        )
+
+        # Only use this path when multiple numeric metrics are
+        # explicitly requested and the question is not grouped.
+        if (
+            len(mentioned_numeric) >= 2
+            and group_column is None
+        ):
+            aliases = []
+            expressions = []
+
+            for metric_column in mentioned_numeric:
+                readable_metric = _readable(
+                    metric_column
+                )
+
+                safe_name = re.sub(
+                    r"[^a-zA-Z0-9]+",
+                    "_",
+                    readable_metric,
+                ).strip("_").lower()
+
+                alias = (
+                    f"{aggregation.lower()}_{safe_name}"
+                )
+
+                base_alias = alias
+                suffix = 2
+
+                while alias in aliases:
+                    alias = (
+                        f"{base_alias}_{suffix}"
+                    )
+                    suffix += 1
+
+                aliases.append(alias)
+
+                expressions.append(
+                    f"{aggregation}("
+                    f"TRY_CAST({_q(metric_column)} AS DOUBLE)"
+                    f") AS {_q(alias)}"
+                )
+
+            sql = (
+                "SELECT "
+                + ", ".join(expressions)
+                + " FROM main_table"
+            )
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            if not rows:
+                return None
+
+            row = rows[0]
+
+            label = {
+                "AVG": "average",
+                "SUM": "sum",
+                "MIN": "minimum",
+                "MAX": "maximum",
+                "MEDIAN": "median",
+            }.get(
+                aggregation,
+                aggregation.lower(),
+            )
+
+            parts = []
+
+            for metric_column, alias in zip(
+                mentioned_numeric,
+                aliases,
+            ):
+                value = row.get(alias)
+
+                if value is None:
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        "no numeric value"
+                    )
+                    continue
+
+                try:
+                    value_float = float(value)
+
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        f"{value_float:,.2f}"
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        f"{value}"
+                    )
+
+            answer = (
+                f"The {label} values are: "
+                + "; ".join(parts)
+                + "."
+            )
+
+            return _base_result(
+                question,
+                "local_query",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {
+                    "type": "multi_metric",
+                    "x": "",
+                    "y": aliases,
+                    "title": (
+                        f"{label.title()} "
+                        "Across Selected Metrics"
+                    ),
+                },
+            )
+
+
+    if aggregation and not _detect_group_column(
+        q,
+        columns,
+    ):
+        metric = _detect_metric_column(
+            q,
+            columns,
+            numeric,
+        )
+
+        if aggregation == "COUNT":
+            target = (
+                _q(metric)
+                if metric
+                else "*"
+            )
+
+            sql = (
+                "SELECT COUNT("
+                + target
+                + ") AS count "
+                "FROM main_table"
+            )
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            count = (
+                int(rows[0]["count"])
+                if rows and rows[0]["count"] is not None
+                else 0
+            )
+
+            subject = (
+                _readable(metric)
+                if metric
+                else "records"
+            )
+
+            return _base_result(
+                question,
+                "local_query",
+                f"The count of {subject} is {count:,}.",
+                sql,
+                result_columns,
+                rows,
+                {
+                    "type": "metric",
+                    "x": "",
+                    "y": "count",
+                    "title": (
+                        f"Count of "
+                        f"{subject.title()}"
+                    ),
+                },
+            )
+
+        if metric:
+            alias = (
+                f"{aggregation.lower()}_value"
+            )
+
+            sql = (
+                "SELECT "
+                f"{aggregation}("
+                f"TRY_CAST({_q(metric)} AS DOUBLE)"
+                f") AS {_q(alias)} "
+                "FROM main_table"
+            )
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            value = (
+                rows[0][alias]
+                if rows
+                else None
+            )
+
+            if value is None:
+                return None
+
+            value_float = float(value)
+
+            label = {
+                "AVG": "average",
+                "SUM": "sum",
+                "MIN": "minimum",
+                "MAX": "maximum",
+                "MEDIAN": "median",
+            }.get(
+                aggregation,
+                aggregation.lower(),
+            )
+
+            answer = (
+                f"The {label} "
+                f"{_readable(metric)} "
+                f"is {value_float:,.2f}."
+            )
+
+            return _base_result(
+                question,
+                "local_query",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {
+                    "type": "metric",
+                    "x": "",
+                    "y": alias,
+                    "title": (
+                        f"{label.title()} "
+                        f"{_readable(metric).title()}"
+                    ),
+                },
+            )
+
+    # ------------------------------------------------------------
+    # Correlation
+    # ------------------------------------------------------------
+    if (
+        "correlation" in q
+        or "relationship between" in q
+        or "related" in q
+    ):
+        mentioned = [
+            column
+            for column in _find_mentioned_columns(
+                q,
+                columns,
+            )
+            if column in numeric
+        ]
+
+        if len(mentioned) >= 2:
+            first, second = mentioned[:2]
+
+            sql = f"""
+                SELECT corr(
+                    TRY_CAST({_q(first)} AS DOUBLE),
+                    TRY_CAST({_q(second)} AS DOUBLE)
+                ) AS correlation
+                FROM main_table
+                WHERE {_q(first)} IS NOT NULL
+                  AND {_q(second)} IS NOT NULL
+            """
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            if (
+                rows
+                and rows[0]["correlation"] is not None
+            ):
+                correlation = float(
+                    rows[0]["correlation"]
+                )
+
+                answer = (
+                    "The correlation between "
+                    f"{_readable(first)} and "
+                    f"{_readable(second)} is "
+                    f"{correlation:.3f}."
+                )
+
+                return _base_result(
+                    question,
+                    "correlation_analysis",
+                    answer,
+                    sql,
+                    result_columns,
+                    rows,
+                    {
+                        "type": "scatter",
+                        "x": first,
+                        "y": second,
+                        "title": (
+                            f"{_readable(first)} "
+                            "vs "
+                            f"{_readable(second)}"
+                        ),
+                        "correlation": correlation,
+                    },
+                )
+
+    return None
+
+
+
+def _try_filtering_query(dataset, question):
+    """
+    Generic dataset-independent filtering engine.
+
+    Supports natural-language conditions such as:
+
+        Percentage greater than 80
+        price below 100
+        salary >= 50000
+        age between 25 and 40
+        score > 80 and attendance > 75
+
+    The function resolves columns from the actual dataset schema and
+    generates a safe DuckDB WHERE clause.
+    """
+
+    import re
+
+    q = (question or "").strip()
+
+    if not q:
+        return None
+
+    # ------------------------------------------------------------
+    # Load actual dataset schema
+    # ------------------------------------------------------------
+
+    # Resolve schema from the Dataset abstraction first.
+    # The current application stores column names directly in
+    # dataset.columns and the DuckDB connection in dataset.con.
+    columns = list(getattr(dataset, "columns", None) or [])
+
+    # Fallback for DataFrame-backed dataset implementations.
+    if not columns:
+        try:
+            columns = list(dataset.df.columns)
+        except Exception:
+            columns = []
+
+    if not columns:
+        return None
+
+    # Normalize both the dataset column names and the question.
+    #
+    # This allows all of these to resolve to the same column:
+    #
+    #   Attendance_Percent
+    #   Attendance Percent
+    #   attendance_percent
+    #   attendance percent
+    #
+    # The original column name is always retained for SQL generation.
+
+    def normalize_identifier(value):
+        value = str(value).strip().lower()
+        value = re.sub(r"[_\-]+", " ", value)
+        value = re.sub(r"\s+", " ", value)
+        return value.strip()
+
+    normalized = {
+        normalize_identifier(column): str(column)
+        for column in columns
     }
+
+    # ------------------------------------------------------------
+    # Resolve columns mentioned in the question
+    # ------------------------------------------------------------
+
+    mentioned = []
+
+    q_lower = q.lower()
+    q_normalized = normalize_identifier(q)
+
+    for normalized_name, original_name in normalized.items():
+        if not normalized_name:
+            continue
+
+        # Match against normalized natural-language form.
+        if normalized_name in q_normalized:
+            if original_name not in mentioned:
+                mentioned.append(original_name)
+
+        # Also support the literal schema spelling.
+        elif str(original_name).lower() in q_lower:
+            if original_name not in mentioned:
+                mentioned.append(original_name)
+
+    if not mentioned:
+        return None
+
+    # ------------------------------------------------------------
+    # Detect condition phrases
+    #
+    # Work entirely with a normalized version of the question so
+    # schema names such as:
+    #
+    #   Attendance_Percent
+    #   Attendance Percent
+    #   attendance_percent
+    #
+    # are treated consistently.
+    # ------------------------------------------------------------
+
+    q_condition = normalize_identifier(q)
+
+    operator_patterns = [
+        (r"greater than or equal to", ">="),
+        (r"more than or equal to", ">="),
+        (r"less than or equal to", "<="),
+        (r"at least", ">="),
+        (r"at most", "<="),
+        (r"no more than", "<="),
+        (r"not equal to", "!="),
+        (r"greater than", ">"),
+        (r"more than", ">"),
+        (r"above", ">"),
+        (r"over", ">"),
+        (r"less than", "<"),
+        (r"below", "<"),
+        (r"under", "<"),
+        (r"equal to", "="),
+        (r"equals", "="),
+    ]
+
+    conditions = []
+
+    # ------------------------------------------------------------
+    # Extract a condition independently for EVERY mentioned column.
+    # ------------------------------------------------------------
+
+    for column in mentioned:
+        normalized_column = normalize_identifier(column)
+
+        if not normalized_column:
+            continue
+
+        # Escape the actual schema name for safe regex construction.
+        column_pattern = re.escape(normalized_column)
+
+        found = False
+
+        # Natural-language operators:
+        #
+        #   Percentage greater than 80
+        #   Attendance_Percent greater than 75
+        #   score at least 70
+        #
+        for pattern, operator in operator_patterns:
+            match = re.search(
+                rf"(?<!\w){column_pattern}(?!\w)"
+                rf"\s+{pattern}\s+"
+                rf"(-?\d+(?:\.\d+)?)",
+                q_condition,
+                re.IGNORECASE,
+            )
+
+            if match:
+                conditions.append(
+                    (
+                        column,
+                        operator,
+                        match.group(1),
+                    )
+                )
+                found = True
+                break
+
+        if found:
+            continue
+
+        # --------------------------------------------------------
+        # Symbolic operators:
+        #
+        #   Percentage > 80
+        #   Attendance_Percent >= 75
+        #   score <= 50
+        # --------------------------------------------------------
+
+        match = re.search(
+            rf"(?<!\w){column_pattern}(?!\w)"
+            rf"\s*(>=|<=|!=|<>|>|<|=)\s*"
+            rf"(-?\d+(?:\.\d+)?)",
+            q_condition,
+            re.IGNORECASE,
+        )
+
+        if match:
+            conditions.append(
+                (
+                    column,
+                    match.group(1),
+                    match.group(2),
+                )
+            )
+
+    # ------------------------------------------------------------
+    # Support "between X and Y" conditions.
+    #
+    # Example:
+    #   Percentage between 70 and 90
+    #
+    # This becomes:
+    #   Percentage >= 70
+    #   Percentage <= 90
+    # ------------------------------------------------------------
+
+    between_pattern = re.compile(
+        r"(?P<column>.+?)\s+between\s+"
+        r"(?P<low>-?\d+(?:\.\d+)?)\s+and\s+"
+        r"(?P<high>-?\d+(?:\.\d+)?)",
+        re.IGNORECASE,
+    )
+
+    for match in between_pattern.finditer(q_condition):
+        expression = match.group(0)
+
+        for column in mentioned:
+            normalized_column = normalize_identifier(column)
+
+            if re.search(
+                rf"(?<!\w){re.escape(normalized_column)}(?!\w)",
+                expression,
+                re.IGNORECASE,
+            ):
+                conditions.append(
+                    (
+                        column,
+                        ">=",
+                        match.group("low"),
+                    )
+                )
+
+                conditions.append(
+                    (
+                        column,
+                        "<=",
+                        match.group("high"),
+                    )
+                )
+
+                break
+
+    # ------------------------------------------------------------
+    # Remove duplicate conditions while preserving order.
+    # ------------------------------------------------------------
+
+    unique_conditions = []
+    seen_conditions = set()
+
+    for condition in conditions:
+        if condition not in seen_conditions:
+            unique_conditions.append(condition)
+            seen_conditions.add(condition)
+
+    conditions = unique_conditions
+
+    if not conditions:
+        return None
+
+    # ------------------------------------------------------------
+    # Build WHERE clause
+    # ------------------------------------------------------------
+
+    def quote(identifier):
+        return '"' + str(identifier).replace('"', '""') + '"'
+
+    where_parts = []
+
+    for column, operator, value in conditions:
+        where_parts.append(
+            f"TRY_CAST({quote(column)} AS DOUBLE) {operator} {value}"
+        )
+
+    where_clause = "\n        AND ".join(where_parts)
+
+    # ------------------------------------------------------------
+    # Decide whether the user wants a count or matching rows.
+    # ------------------------------------------------------------
+
+    count_request = any(
+        phrase in q_lower
+        for phrase in (
+            "how many",
+            "number of",
+            "count",
+            "count of",
+            "how much",
+        )
+    )
+
+    if count_request:
+        sql = f"""
+            SELECT COUNT(*) AS count
+            FROM main_table
+            WHERE {where_clause}
+        """
+
+        result_columns, rows = _execute(dataset, sql)
+
+        if not rows:
+            return None
+
+        # _execute() normally returns dictionary-like rows.
+        # Keep tuple/list compatibility for older execution paths.
+        first_row = rows[0]
+
+        if isinstance(first_row, dict):
+            count = first_row.get("count")
+        else:
+            count = first_row[0]
+
+        condition_text = " and ".join(
+            f"{column} {operator} {value}"
+            for column, operator, value in conditions
+        )
+
+        answer = (
+            f"There are {int(count)} records matching "
+            f"the condition(s): {condition_text}."
+        )
+
+        return {
+            "answer": answer,
+            "sql": sql.strip(),
+            "columns": result_columns,
+            "rows": rows,
+            "model": "local",
+            "fallback": None,
+        }
+
+    # ------------------------------------------------------------
+    # Otherwise return matching records.
+    # ------------------------------------------------------------
+
+    sql = f"""
+        SELECT *
+        FROM main_table
+        WHERE {where_clause}
+        LIMIT 100
+    """
+
+    result_columns, rows = _execute(dataset, sql)
+
+    return {
+        "answer": (
+            f"Found {len(rows)} matching records. "
+            f"Showing up to 100 records."
+        ),
+        "sql": sql.strip(),
+        "columns": result_columns,
+        "rows": rows,
+        "model": "local",
+        "fallback": None,
+    }
+
 
 def _try_grouped_query(
     dataset: Dataset,
     question: str,
 ) -> dict | None:
     """
-    Handle questions such as:
+    Generic grouped aggregation and ranking engine.
 
-        Show total sales by region
-        Show average revenue by product
-        Show total units sold by region
-        Show average rating by product
-        Show sales distribution by region
-
-    Uses DuckDB directly without Gemini.
+    Handles:
+      - count by Department
+      - average CGPA by Department
+      - which Department has the highest average CGPA
+      - top 5 categories by average score
+      - lowest/highest category metrics
     """
+    q = _norm(question)
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
 
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # --------------------------------------------------------
-    # Detect comparison questions
-    # --------------------------------------------------------
-
-    comparison_mode = False
-    comparison_values = []
-
-    if "compare" in q and " and " in q:
-
-        # Pattern: compare ... between North and South
-        if " between " in q:
-            comparison_part = q.split(" between ", 1)[1]
-            comparison_part = comparison_part.split(" and ", 1)
-
-            if len(comparison_part) == 2:
-                comparison_values = [
-                    comparison_part[0].strip(" .?!"),
-                    comparison_part[1].strip(" .?!"),
-                ]
-
-                comparison_values = [
-                    re.sub(
-                        r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
-                        "",
-                        value,
-                        flags=re.IGNORECASE,
-                    ).strip()
-                    for value in comparison_values
-                ]
-
-        # Pattern: compare ... of North and South
-        elif " of " in q:
-            comparison_part = q.split(" of ", 1)[1]
-            comparison_part = comparison_part.split(" and ", 1)
-
-            if len(comparison_part) == 2:
-                comparison_values = [
-                    comparison_part[0].strip(" .?!"),
-                    comparison_part[1].strip(" .?!"),
-                ]
-
-                comparison_values = [
-                    re.sub(
-                        r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
-                        "",
-                        value,
-                        flags=re.IGNORECASE,
-                    ).strip()
-                    for value in comparison_values
-                ]
-
-        if len(comparison_values) == 2:
-            comparison_values = [
-                re.sub(
-                    r"\s+(?:regions?|products?|categories?|areas?|locations?)$",
-                    "",
-                    value,
-                    flags=re.IGNORECASE,
-                ).strip()
-                for value in comparison_values
-            ]
-            comparison_mode = True
-
-    # Normal grouped questions can use:
-    # "by", "wise", "for each", "per", or "across".
-    # Comparison questions use "between X and Y" or "of X and Y".
-    grouped_intent = (
-        " by " in q
-        or " wise" in q
-        or "wise" in q
-        or " for each " in q
-        or " per " in q
-        or " across " in q
+    group = _detect_group_column(
+        q,
+        columns,
     )
 
-    if not grouped_intent and not comparison_mode:
-        return None
-
-    # --------------------------------------------------------
-    # Get dataset columns
-    # --------------------------------------------------------
-
-    schema_rows = dataset.con.execute(
-        """
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_name = 'main_table'
-        ORDER BY ordinal_position
-        """
-    ).fetchall()
-
-    if not schema_rows:
-        return None
-
-    columns = [
-        row[0]
-        for row in schema_rows
-    ]
-
-    # --------------------------------------------------------
-    # Find grouping column
-    # --------------------------------------------------------
-
-    group_aliases = {
-        "area": "region",
-        "location": "region",
-        "territory": "region",
-        "item": "product",
-        "category": "product",
-    }
-
-    group_column = None
-
-    for alias, actual_column in group_aliases.items():
-
-        if alias in q and actual_column in columns:
-            group_column = actual_column
-            break
-
-    # Exact column matching
-    if group_column is None:
-
-        for column in columns:
-
-            column_lower = column.lower()
-            column_readable = column_lower.replace("_", " ")
-
-            if (
-                f"by {column_lower}" in q
-                or f"by {column_readable}" in q
-                or f"{column_lower} wise" in q
-                or f"{column_readable} wise" in q
-                or f"{column_lower}-wise" in q
-                or f"{column_readable}-wise" in q
-                or f"for each {column_lower}" in q
-                or f"for each {column_readable}" in q
-                or f"per {column_lower}" in q
-                or f"per {column_readable}" in q
-                or f"across {column_lower}" in q
-                or f"across {column_readable}" in q
-            ):
-                group_column = column
-                break
-
-    # --------------------------------------------------------
-    # Infer grouping column for comparison questions
-    # --------------------------------------------------------
-
-    if group_column is None and comparison_mode and len(comparison_values) == 2:
-
-        for column in columns:
-
-            identifier = (
-                '"'
-                + column.replace('"', '""')
-                + '"'
-            )
-
-            try:
-                distinct_rows = dataset.con.execute(
-                    f"""
-                    SELECT DISTINCT {identifier}
-                    FROM main_table
-                    WHERE {identifier} IS NOT NULL
-                    LIMIT 1000
-                    """
-                ).fetchall()
-            except Exception:
-                continue
-
-            distinct_values = {
-                str(row[0]).strip().lower()
-                for row in distinct_rows
-            }
-
-            if all(
-                value.lower() in distinct_values
-                for value in comparison_values
-            ):
-                group_column = column
-                break
-
-    # --------------------------------------------------------
-    # Detect grouping column from comparison values
-    # --------------------------------------------------------
-
-    if group_column is None and comparison_mode and len(comparison_values) == 2:
-
-        for column in columns:
-
-            try:
-                query = (
-                    'SELECT DISTINCT "'
-                    + column.replace('"', '""')
-                    + '" FROM main_table '
-                    + 'WHERE "'
-                    + column.replace('"', '""')
-                    + '" IS NOT NULL LIMIT 1000'
-                )
-
-                distinct_rows = dataset.con.execute(query).fetchall()
-
-            except Exception:
-                continue
-
-            distinct_values = {
-                str(row[0]).strip().lower()
-                for row in distinct_rows
-            }
-
-            if all(
-                value.lower() in distinct_values
-                for value in comparison_values
-            ):
-                group_column = column
-                break
-
-    if group_column is None:
-        return None
-
-    # --------------------------------------------------------
-    # Determine metric
-    # --------------------------------------------------------
-
-    metric_aliases = {
-        "revenue": ["revenue"],
-
-        # If the dataset has a real "sales" column,
-        # use it. Otherwise fall back to revenue.
-        "sales": ["sales", "revenue"],
-        "sale": ["sales", "revenue"],
-
-        "units sold": ["units_sold"],
-        "units": ["units_sold"],
-        "unit": ["units_sold"],
-
-        "price": ["unit_price"],
-        "unit price": ["unit_price"],
-
-        "marketing": ["marketing_spend"],
-        "marketing spend": ["marketing_spend"],
-        "marketing spending": ["marketing_spend"],
-
-        "rating": ["customer_rating"],
-        "customer rating": ["customer_rating"],
-
-        "returns": ["returns"],
-        "return": ["returns"],
-    }
-
-    metric_column = None
-
-    for phrase, possible_columns in metric_aliases.items():
-
-        if phrase not in q:
-            continue
-
-        for actual_column in possible_columns:
-
-            if actual_column in columns:
-                metric_column = actual_column
-                break
-
-        if metric_column is not None:
-            break
-
-    # --------------------------------------------------------
-    # Try direct column matching
-    # --------------------------------------------------------
-
-    if metric_column is None:
-
-        for column in columns:
-
-            column_text = column.lower()
-            readable_column = column_text.replace("_", " ")
-
-            if (
-                column_text in q
-                or readable_column in q
-            ):
-                metric_column = column
-                break
-
-    if metric_column is None:
-        return None
-
-    # --------------------------------------------------------
-    # Determine aggregation
-    # --------------------------------------------------------
-
-    if any(
-        word in q
-        for word in [
-            "average",
-            "avg",
-            "mean",
-        ]
+    # Ranking questions frequently use:
+    # "Which Department has the highest average CGPA?"
+    # There is no "by Department" phrase, so infer the grouping
+    # dimension from the explicitly mentioned non-numeric column.
+    if group is None and any(
+        phrase in q
+        for phrase in (
+            "which ",
+            "what ",
+            "highest ",
+            "lowest ",
+            "largest ",
+            "smallest ",
+            "top ",
+            "bottom ",
+        )
     ):
-        aggregation = "AVG"
-        operation_name = "average"
-
-    elif any(
-        word in q
-        for word in [
-            "count",
-            "number of",
-            "how many",
-        ]
-    ):
-        aggregation = "COUNT"
-        operation_name = "count"
-
-    elif any(
-        word in q
-        for word in [
-            "maximum",
-            "max",
-            "highest",
-            "largest",
-        ]
-    ):
-        aggregation = "MAX"
-        operation_name = "maximum"
-
-    elif any(
-        word in q
-        for word in [
-            "minimum",
-            "min",
-            "lowest", "bottom",
-            "smallest",
-        ]
-    ):
-        aggregation = "MIN"
-        operation_name = "minimum"
-
-    else:
-        aggregation = "SUM"
-        operation_name = "total"
-
-    # --------------------------------------------------------
-    # Build safe SQL identifiers
-    # --------------------------------------------------------
-
-    group_identifier = (
-        '"'
-        + group_column.replace('"', '""')
-        + '"'
-    )
-
-    metric_identifier = (
-        '"'
-        + metric_column.replace('"', '""')
-        + '"'
-    )
-
-    # --------------------------------------------------------
-    # Build comparison filter
-    # --------------------------------------------------------
-
-    where_clause = ""
-
-    if comparison_mode and len(comparison_values) == 2:
-
-        escaped_values = [
-            value.replace("'", "''")
-            for value in comparison_values
-        ]
-
-        value_list = ", ".join(
-            f"'{value}'"
-            for value in escaped_values
-        )
-
-        where_clause = (
-            f"WHERE LOWER(CAST({group_identifier} AS VARCHAR)) "
-            f"IN ({value_list})"
-        )
-
-    # --------------------------------------------------------
-    # Build SQL
-    # --------------------------------------------------------
-
-    if aggregation == "COUNT":
-
-        sql = f"""
-        SELECT
-            {group_identifier} AS "{group_column}",
-            COUNT({metric_identifier}) AS "count"
-        FROM main_table
-        {where_clause}
-        GROUP BY {group_identifier}
-        ORDER BY "count" DESC
-        """
-
-    else:
-
-        sql = f"""
-        SELECT
-            {group_identifier} AS "{group_column}",
-            {aggregation}(
-                TRY_CAST(
-                    {metric_identifier}
-                    AS DOUBLE
-                )
-            ) AS "{metric_column}"
-        FROM main_table
-        {where_clause}
-        GROUP BY {group_identifier}
-        ORDER BY "{metric_column}" DESC
-        """
-
-    # --------------------------------------------------------
-    # Execute query
-    # --------------------------------------------------------
-
-    try:
-
-        result_columns, rows = _execute_sql(
-            dataset,
-            sql,
-        )
-
-    except Exception as exc:
-
-        print(
-            "Grouped query failed:",
-            repr(exc),
-        )
-
-        return None
-
-    if not rows:
-        return None
-
-    # --------------------------------------------------------
-    # Format answer
-    # --------------------------------------------------------
-
-    answer_lines = []
-
-    for row in rows:
-
-        if len(row) < 2:
-            continue
-
-        group_value = _display_value(
-            row[0]
-        )
-
-        metric_value = _display_value(
-            row[1]
-        )
-
-        answer_lines.append(
-            f"{group_value}: {metric_value}"
-        )
-
-    # --------------------------------------------------------
-    # Comparison-specific answer
-    # --------------------------------------------------------
-
-    if comparison_mode and len(rows) == 2:
-
-        first_group = _display_value(rows[0][0])
-        first_value = float(rows[0][1])
-
-        second_group = _display_value(rows[1][0])
-        second_value = float(rows[1][1])
-
-        difference = abs(first_value - second_value)
-
-        if first_value > second_value:
-            higher_group = first_group
-        elif second_value > first_value:
-            higher_group = second_group
-        else:
-            higher_group = None
-
-        readable_metric = metric_column.replace("_", " ")
-
-        if higher_group is None:
-            comparison_summary = (
-                f"Both {first_group} and {second_group} "
-                f"have the same {readable_metric}."
-            )
-        else:
-            lower_group = (
-                second_group
-                if higher_group == first_group
-                else first_group
-            )
-
-            comparison_summary = (
-                f"{higher_group} generated "
-                f"{difference:,.0f} more {readable_metric} "
-                f"than {lower_group}."
-            )
-
-        answer = (
-            f"{readable_metric.title()} comparison between "
-            f"{first_group} and {second_group}:\n"
-            + "\n".join(answer_lines)
-            + "\n\n"
-            + comparison_summary
-        )
-
-    else:
-
-        answer = (
-            f"The {operation_name} of "
-            f"{metric_column.replace('_', ' ')} "
-            f"by {group_column.replace('_', ' ')} is:\n"
-            + "\n".join(answer_lines)
-        )
-
-    # --------------------------------------------------------
-    # Visualization
-    # --------------------------------------------------------
-
-    visualization = _choose_grouped_visualization(
-        question=question,
-        x_column=group_column,
-        y_column=(
-            "count"
-            if aggregation == "COUNT"
-            else metric_column
-        ),
-        rows=rows,
-    )
-
-    # Use an aggregation-aware comparison chart title.
-    if comparison_mode and len(comparison_values) == 2:
-
-        if aggregation == "AVG":
-            comparison_title = (
-                f"Average {metric_column.replace('_', ' ').title()} Comparison"
-            )
-        elif aggregation == "MAX":
-            comparison_title = (
-                f"Maximum {metric_column.replace('_', ' ').title()} Comparison"
-            )
-        elif aggregation == "MIN":
-            comparison_title = (
-                f"Minimum {metric_column.replace('_', ' ').title()} Comparison"
-            )
-        elif aggregation == "COUNT":
-            comparison_title = (
-                f"Count Comparison"
-            )
-        else:
-            comparison_title = (
-                f"{metric_column.replace('_', ' ').title()} Comparison"
-            )
-
-        visualization["title"] = (
-            f"{comparison_title}: "
-            f"{comparison_values[0].title()} vs "
-            f"{comparison_values[1].title()}"
-        )
-
-    # --------------------------------------------------------
-    # Return result
-    # --------------------------------------------------------
-
-    return {
-        "question": question,
-        "type": "local_grouped_analysis",
-        "answer": answer,
-        "sql": sql.strip(),
-        "columns": result_columns,
-        "rows": _serialize_rows(
-            result_columns,
-            rows,
-        ),
-        "row_count": len(rows),
-        "model": "local",
-        "visualization": visualization,
-    }
-
-def _try_percentage_query(
-    dataset,
-    question: str,
-) -> dict | None:
-    """
-    Handle common percentage/rate questions locally with DuckDB.
-
-    Supports:
-      - Return-rate questions
-      - Grouped percentage-of-total questions such as:
-        "What percentage of revenue comes from each region?"
-    """
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    percentage_intent = (
-        "percentage" in q
-        or "percent" in q
-        or "return rate" in q
-    )
-
-    if not percentage_intent:
-        return None
-
-    columns = list(getattr(dataset, "columns", []) or [])
-    lower_columns = {
-        str(col).lower(): col
-        for col in columns
-    }
-
-    def quote_identifier(name):
-        return '"' + str(name).replace('"', '""') + '"'
-
-    # --------------------------------------------------------
-    # GROUPED PERCENTAGE-OF-TOTAL ANALYSIS
-    # Example:
-    # "What percentage of revenue comes from each region?"
-    # --------------------------------------------------------
-
-    grouped_words = (
-        "each" in q
-        or "by" in q
-        or "per" in q
-        or "from each" in q
-        or "contribution" in q
-        or "contributes" in q
-        or "share" in q
-        or "breakdown" in q
-        or "composition" in q
-        or "distribution" in q
-    )
-
-    metric_column = None
-
-    # Prefer an explicitly mentioned numeric metric.
-    for keyword, column_name in [
-        ("revenue", "revenue"),
-        ("sales", "sales"),
-        ("profit", "profit"),
-        ("amount", "amount"),
-        ("units sold", "units_sold"),
-        ("units", "units"),
-    ]:
-        if keyword in q and column_name in lower_columns:
-            metric_column = lower_columns[column_name]
-            break
-
-    # Try to identify a grouping/category column.
-    group_column = None
-
-    if "region" in q and "region" in lower_columns:
-        group_column = lower_columns["region"]
-    elif "category" in q and "category" in lower_columns:
-        group_column = lower_columns["category"]
-    elif "product" in q and "product" in lower_columns:
-        group_column = lower_columns["product"]
-    elif "segment" in q and "segment" in lower_columns:
-        group_column = lower_columns["segment"]
-    elif "country" in q and "country" in lower_columns:
-        group_column = lower_columns["country"]
-    elif "city" in q and "city" in lower_columns:
-        group_column = lower_columns["city"]
-    elif "department" in q and "department" in lower_columns:
-        group_column = lower_columns["department"]
-
-    if (
-        grouped_words
-        and metric_column is not None
-        and group_column is not None
-    ):
-        metric_sql = quote_identifier(metric_column)
-        group_sql = quote_identifier(group_column)
-
-        sql = f"""
-            WITH grouped AS (
-                SELECT
-                    {group_sql} AS group_value,
-                    SUM(
-                        TRY_CAST({metric_sql} AS DOUBLE)
-                    ) AS metric_value
-                FROM main_table
-                WHERE {group_sql} IS NOT NULL
-                GROUP BY {group_sql}
-            ),
-            totals AS (
-                SELECT
-                    SUM(metric_value) AS total_value
-                FROM grouped
-            )
-            SELECT
-                group_value,
-                metric_value,
-                CASE
-                    WHEN total_value = 0 THEN 0
-                    ELSE
-                        (metric_value * 100.0)
-                        / total_value
-                END AS percentage
-            FROM grouped
-            CROSS JOIN totals
-            ORDER BY metric_value DESC
-        """
-
-        started = time.perf_counter()
-
-        try:
-            rows_raw = dataset.con.execute(sql).fetchall()
-        except Exception as exc:
-            print(
-                "Grouped percentage query failed:",
-                repr(exc),
-            )
-            return None
-
-        duration_ms = round(
-            (time.perf_counter() - started) * 1000,
-            2,
-        )
-
-        if not rows_raw:
-            return None
-
-        rows = [
-            {
-                str(group_column): row[0],
-                str(metric_column): (
-                    float(row[1])
-                    if row[1] is not None
-                    else 0.0
-                ),
-                "percentage": (
-                    float(row[2])
-                    if row[2] is not None
-                    else 0.0
-                ),
-            }
-            for row in rows_raw
-        ]
-
-        total_value = sum(
-            row[str(metric_column)]
-            for row in rows
-        )
-
-        percentage_parts = [
-            f"{row[str(group_column)]}: {row['percentage']:.2f}%"
-            for row in rows
-        ]
-
-        answer = (
-            f"{metric_column.title()} share by "
-            f"{str(group_column)}: "
-            + ", ".join(percentage_parts)
-            + "."
-        )
-
-        return {
-            "question": question,
-            "type": "percentage_analysis",
-            "answer": answer,
-            "sql": sql.strip(),
-            "columns": [
-                str(group_column),
-                str(metric_column),
-                "percentage",
-            ],
-            "rows": rows,
-            "row_count": len(rows),
-            "model": "local",
-            "visualization": {
-                "type": "pie",
-                "x": str(group_column),
-                "y": "percentage",
-                "title": (
-                    f"{metric_column.title()} "
-                    f"Contribution by {str(group_column).title()}"
-                ),
-            },
-            "duration_ms": duration_ms,
-        }
-
-    # --------------------------------------------------------
-    # EXISTING RETURN-RATE ANALYSIS
-    # --------------------------------------------------------
-
-    numerator = None
-    denominator = None
-
-    if (
-        ("returned" in q or "return" in q)
-        and ("unit" in q or "units" in q)
-    ):
-        numerator = (
-            lower_columns.get("returns")
-            or lower_columns.get("returned")
-        )
-        denominator = (
-            lower_columns.get("units_sold")
-            or lower_columns.get("units")
-            or lower_columns.get("total_units")
-        )
-
-    if numerator is None and "return rate" in q:
-        numerator = (
-            lower_columns.get("returns")
-            or lower_columns.get("returned")
-        )
-        denominator = (
-            lower_columns.get("units_sold")
-            or lower_columns.get("units")
-            or lower_columns.get("total_units")
-        )
-
-    if numerator is None or denominator is None:
-        return None
-
-    numerator_sql = quote_identifier(numerator)
-    denominator_sql = quote_identifier(denominator)
-
-    sql = f"""
-        SELECT
-            (
-                SUM(
-                    TRY_CAST({numerator_sql} AS DOUBLE)
-                ) * 100.0
-            ) / NULLIF(
-                SUM(
-                    TRY_CAST({denominator_sql} AS DOUBLE)
-                ),
-                0
-            ) AS percentage
-        FROM main_table
-    """
-
-    started = time.perf_counter()
-
-    try:
-        row = dataset.con.execute(sql).fetchone()
-    except Exception as exc:
-        print(
-            "Percentage query failed:",
-            repr(exc),
-        )
-        return None
-
-    duration_ms = round(
-        (time.perf_counter() - started) * 1000,
-        2,
-    )
-
-    if not row or row[0] is None:
-        return None
-
-    percentage = float(row[0])
-
-    answer = (
-        f"{percentage:.2f}% of units were returned."
-    )
-
-    return {
-        "question": question,
-        "type": "percentage_analysis",
-        "answer": answer,
-        "sql": sql.strip(),
-        "columns": ["percentage"],
-        "rows": [
-            {
-                "percentage": percentage,
-            }
-        ],
-        "row_count": 1,
-        "model": "local",
-        "visualization": {
-            "type": "metric",
-            "y": "percentage",
-            "title": "Percentage of Units Returned",
-        },
-        "duration_ms": duration_ms,
-    }
-
-def _try_numeric_query(
-    dataset,
-    question: str,
-):
-    """
-    Handle simple numeric aggregation questions locally.
-
-    Examples:
-        TOTAL SALES
-        TOTAL REVENUE
-        AVERAGE SALES
-        AVERAGE REVENUE
-        MAX REVENUE
-        MIN UNITS SOLD
-    """
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # STEP 1 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Determine operation
-    # --------------------------------------------------------
-
-    if (
-        "average" in q
-        or "avg" in q
-        or "mean" in q
-    ):
-        operation = "AVG"
-
-    elif (
-        "total" in q
-        or "sum" in q
-    ):
-        operation = "SUM"
-
-    elif (
-        "maximum" in q
-        or "max" in q
-        or "highest" in q
-        or "largest" in q
-    ):
-        operation = "MAX"
-
-    elif (
-        "minimum" in q
-        or "min" in q
-        or "lowest" in q
-        or "smallest" in q
-    ):
-        operation = "MIN"
-
-    elif (
-        "count" in q
-        or "how many" in q
-    ):
-        operation = "COUNT"
-
-    else:
-        return None
-
-    # --------------------------------------------------------
-    # STEP 2 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Get actual dataset columns
-    # --------------------------------------------------------
-
-    schema_rows = dataset.con.execute(
-        """
-        SELECT
-            column_name,
-            data_type
-        FROM information_schema.columns
-        WHERE table_name = 'main_table'
-        ORDER BY ordinal_position
-        """
-    ).fetchall()
-
-    if not schema_rows:
-        return None
-
-    # --------------------------------------------------------
-    # STEP 3 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Find column
-    # --------------------------------------------------------
-
-    selected_column = None
-
-    # --------------------------------------------------------
-    # Business-language aliases
-    # --------------------------------------------------------
-
-    column_aliases = {
-        "marketing spending": "marketing_spend",
-        "marketing spend": "marketing_spend",
-        "marketing cost": "marketing_spend",
-        "marketing": "marketing_spend",
-
-        "customer rating": "customer_rating",
-        "rating": "customer_rating",
-
-        "unit price": "unit_price",
-        "price per unit": "unit_price",
-        "unit_price": "unit_price",
-        "price": "unit_price",
-
-        "units sold": "units_sold",
-        "units_sold": "units_sold",
-        "quantity": "units_sold",
-        "qty": "units_sold",
-        "units": "units_sold",
-
-        "revenue": "revenue",
-        "sales": "revenue",
-        "sale": "revenue",
-        "income": "revenue",
-        "earnings": "revenue",
-
-        "returns": "returns",
-        "return": "returns",
-    }
-
-    # Match longer, more specific phrases before shorter aliases.
-    for alias, actual_column in sorted(
-        column_aliases.items(),
-        key=lambda item: len(item[0]),
-        reverse=True,
-    ):
-        if alias in q:
-            for column_name, data_type in schema_rows:
-                if column_name.lower() == actual_column.lower():
-                    selected_column = column_name
-                    break
-
-        if selected_column is not None:
-            break
-
-    # --------------------------------------------------------
-    # Try exact column name
-    # --------------------------------------------------------
-
-    if selected_column is None:
-
-        for column_name, data_type in schema_rows:
-
-            if column_name.lower() in q:
-
-                selected_column = column_name
-                break
-
-    # --------------------------------------------------------
-    # Try normalized column name
-    # --------------------------------------------------------
-
-    if selected_column is None:
-
-        normalized_question = re.sub(
-            r"[^a-z0-9]+",
-            "",
+        mentioned = _find_mentioned_columns(
             q,
+            columns,
         )
 
-        for column_name, data_type in schema_rows:
+        non_numeric = [
+            column
+            for column in mentioned
+            if column not in numeric
+        ]
 
-            normalized_column = re.sub(
-                r"[^a-z0-9]+",
-                "",
-                column_name.lower(),
-            )
+        if non_numeric:
+            group = non_numeric[0]
 
-            if (
-                normalized_column
-                and normalized_column
-                in normalized_question
-            ):
+    if not group:
+        return None
 
-                selected_column = column_name
-                break
+    aggregation = _detect_aggregation(q)
+    # ------------------------------------------------------------
+    # Multi-column aggregation
+    # ------------------------------------------------------------
+    #
+    # Examples:
+    #   What is the average of Mathematics, Programming, and Data_Science?
+    #   What is the sum of Revenue, Profit, and Cost?
+    #   Give me the maximum of Sales and Revenue.
+    #
+    # Resolve every explicitly mentioned numeric column and aggregate
+    # them independently. This is dataset-agnostic.
+    # ------------------------------------------------------------
 
-    # --------------------------------------------------------
-    # Try word-level matching
-    # --------------------------------------------------------
-
-    if selected_column is None:
-
-        question_words = set(
-            re.findall(
-                r"[a-zA-Z0-9]+",
+    if aggregation:
+        mentioned_numeric = [
+            column
+            for column in _find_mentioned_columns(
                 q,
+                columns,
             )
+            if column in numeric
+        ]
+
+        group_column = _detect_group_column(
+            q,
+            columns,
         )
 
-        ignored_words = {
-            "what",
-            "is",
-            "the",
-            "total",
+        # Only use this path when multiple numeric metrics are
+        # explicitly requested and the question is not grouped.
+        if (
+            len(mentioned_numeric) >= 2
+            and group_column is None
+        ):
+            aliases = []
+            expressions = []
+
+            for metric_column in mentioned_numeric:
+                readable_metric = _readable(
+                    metric_column
+                )
+
+                safe_name = re.sub(
+                    r"[^a-zA-Z0-9]+",
+                    "_",
+                    readable_metric,
+                ).strip("_").lower()
+
+                alias = (
+                    f"{aggregation.lower()}_{safe_name}"
+                )
+
+                base_alias = alias
+                suffix = 2
+
+                while alias in aliases:
+                    alias = (
+                        f"{base_alias}_{suffix}"
+                    )
+                    suffix += 1
+
+                aliases.append(alias)
+
+                expressions.append(
+                    f"{aggregation}("
+                    f"TRY_CAST({_q(metric_column)} AS DOUBLE)"
+                    f") AS {_q(alias)}"
+                )
+
+            sql = (
+                "SELECT "
+                + ", ".join(expressions)
+                + " FROM main_table"
+            )
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            if not rows:
+                return None
+
+            row = rows[0]
+
+            label = {
+                "AVG": "average",
+                "SUM": "sum",
+                "MIN": "minimum",
+                "MAX": "maximum",
+                "MEDIAN": "median",
+            }.get(
+                aggregation,
+                aggregation.lower(),
+            )
+
+            parts = []
+
+            for metric_column, alias in zip(
+                mentioned_numeric,
+                aliases,
+            ):
+                value = row.get(alias)
+
+                if value is None:
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        "no numeric value"
+                    )
+                    continue
+
+                try:
+                    value_float = float(value)
+
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        f"{value_float:,.2f}"
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    parts.append(
+                        f"{_readable(metric_column)}: "
+                        f"{value}"
+                    )
+
+            answer = (
+                f"The {label} values are: "
+                + "; ".join(parts)
+                + "."
+            )
+
+            return _base_result(
+                question,
+                "local_query",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {
+                    "type": "multi_metric",
+                    "x": "",
+                    "y": aliases,
+                    "title": (
+                        f"{label.title()} "
+                        "Across Selected Metrics"
+                    ),
+                },
+            )
+
+
+    count_mode = (
+        aggregation == "COUNT"
+        or any(
+            phrase in q
+            for phrase in (
+                "how many",
+                "number of",
+                "count",
+            )
+        )
+    )
+
+    metric = _detect_metric_column(
+        q,
+        columns,
+        numeric,
+        exclude=group,
+    )
+    # ------------------------------------------------------------
+    # Generic scalar MAX/MIN metric resolution
+    # ------------------------------------------------------------
+    scalar_maxmin_language = any(
+        re.search(
+            r"\b" + re.escape(word) + r"\b",
+            q,
+            re.IGNORECASE,
+        )
+        for word in (
+            "highest",
+            "lowest",
+            "maximum",
+            "minimum",
+        )
+    )
+
+    if metric is None and scalar_maxmin_language:
+        metric_text = q
+
+        metric_text = re.sub(
+            r"\b(?:what\s+is|what's|tell\s+me|show\s+me|find|get|give\s+me)\b",
+            " ",
+            metric_text,
+            flags=re.IGNORECASE,
+        )
+
+        metric_text = re.sub(
+            r"\b(?:highest|lowest|maximum|minimum)\b",
+            " ",
+            metric_text,
+            flags=re.IGNORECASE,
+        )
+
+        metric_text = re.sub(
+            r"\b(?:value|amount|number)\b",
+            " ",
+            metric_text,
+            flags=re.IGNORECASE,
+        )
+
+        metric_text = re.sub(r"\s+", " ", metric_text).strip()
+
+        metric = _resolve_column(
+            metric_text,
+            columns,
+            numeric_only=True,
+            numeric=numeric,
+        )
+
+        if metric is not None:
+            if re.search(
+                r"\b(?:highest|maximum)\b",
+                q,
+                re.IGNORECASE,
+            ):
+                aggregation = "MAX"
+            elif re.search(
+                r"\b(?:lowest|minimum)\b",
+                q,
+                re.IGNORECASE,
+            ):
+                aggregation = "MIN"
+
+
+    # ------------------------------------------------------------
+    # Requested metric is not represented by the dataset schema.
+    #
+    # Example:
+    #   "Which Department has the highest average CGPA?"
+    #
+    # If CGPA does not exist, do NOT call Gemini and do NOT
+    # silently substitute another metric such as Percentage.
+    # Return a schema-aware response instead.
+    # ------------------------------------------------------------
+    metric_language = any(
+        phrase in q
+        for phrase in (
             "average",
             "avg",
             "mean",
             "sum",
+            "total",
+            "highest",
+            "lowest",
             "maximum",
             "minimum",
-            "max",
-            "min",
-            "highest",
-            "lowest", "bottom",
-            "largest",
-            "smallest",
-            "of",
-            "for",
-            "give",
-            "me",
-            "calculate",
-            "show",
-        }
+            "median",
+            "top",
+            "bottom",
+        )
+    )
 
-        question_words -= ignored_words
+    if (
+        metric is None
+        and not count_mode
+        and metric_language
+    ):
+        available_numeric = [
+            _readable(column)
+            for column in numeric
+        ]
 
-        for column_name, data_type in schema_rows:
-
-            column_words = re.findall(
-                r"[a-zA-Z0-9]+",
-                column_name.lower(),
+        if available_numeric:
+            available_text = ", ".join(
+                available_numeric[:12]
             )
 
-            for word in column_words:
+            if len(available_numeric) > 12:
+                available_text += ", ..."
 
-                if (
-                    len(word) >= 2
-                    and word in question_words
-                ):
+            answer = (
+                "I cannot answer this question because "
+                "the requested metric is not available "
+                "in the dataset schema. "
+                f"Available numeric fields include: "
+                f"{available_text}."
+            )
+        else:
+            answer = (
+                "I cannot answer this question because "
+                "the requested metric is not available "
+                "in the dataset schema."
+            )
 
-                    selected_column = column_name
-                    break
-
-            if selected_column is not None:
-                break
-
-    # --------------------------------------------------------
-    # Column not found
-    # --------------------------------------------------------
-
-    if selected_column is None:
-
-        print(
-            "LOCAL NUMERIC: column not found for:",
+        return _base_result(
             question,
+            "schema_validation",
+            answer,
+            None,
+            [],
+            [],
         )
 
-        print(
-            "Available columns:",
-            [
-                row[0]
-                for row in schema_rows
-            ],
+    # Explicit ranking phrases define AVG when the question says
+    # "highest average" / "lowest average".
+    if any(
+        phrase in q
+        for phrase in (
+            "highest average",
+            "lowest average",
+            "highest mean",
+            "lowest mean",
         )
+    ):
+        aggregation = "AVG"
 
+    if not aggregation and metric:
+        aggregation = "AVG"
+
+    if not aggregation:
         return None
 
-    print(
-        "LOCAL NUMERIC: selected column:",
-        selected_column,
-    )
-
-    # --------------------------------------------------------
-    # STEP 4 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Safely quote column
-    # --------------------------------------------------------
-
-    quoted_column = (
-        '"'
-        + selected_column.replace(
-            '"',
-            '""',
-        )
-        + '"'
-    )
-
-    # --------------------------------------------------------
-    # STEP 5 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Build SQL
-    # --------------------------------------------------------
-
-    if operation == "COUNT":
-
+    # ------------------------------------------------------------
+    # Grouped row counts
+    # ------------------------------------------------------------
+    if count_mode and not metric:
         sql = f"""
-        SELECT
-            COUNT({quoted_column}) AS count
-        FROM main_table
+            SELECT
+                {_q(group)} AS {_q(group)},
+                COUNT(*) AS count
+            FROM main_table
+            WHERE {_q(group)} IS NOT NULL
+            GROUP BY {_q(group)}
+            ORDER BY count DESC
         """
 
-    else:
-
-        sql = f"""
-        SELECT
-            {operation}(
-                TRY_CAST(
-                    {quoted_column}
-                    AS DOUBLE
-                )
-            ) AS result
-        FROM main_table
-        """
-
-    # --------------------------------------------------------
-    # STEP 6 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Execute locally
-    # --------------------------------------------------------
-
-    try:
-
-        columns, rows = _execute_sql(
+        result_columns, rows = _execute(
             dataset,
             sql,
         )
 
-    except Exception as e:
+        lines = [
+            f"{row[group]}: "
+            f"{int(row['count']):,}"
+            for row in rows
+        ]
 
-        print(
-            "LOCAL NUMERIC SQL ERROR:",
-            repr(e),
+        answer = (
+            f"The number of records in each "
+            f"{_readable(group)} is:\n"
+            + "\n".join(lines)
         )
 
+        return _base_result(
+            question,
+            "local_grouped_analysis",
+            answer,
+            sql,
+            result_columns,
+            rows,
+            {
+                "type": "bar",
+                "x": group,
+                "y": "count",
+                "title": (
+                    f"Count by "
+                    f"{_readable(group).title()}"
+                ),
+            },
+        )
+
+    if not metric:
         return None
+
+    # ------------------------------------------------------------
+    # Ranking / top-N vs ordinary grouped aggregation
+    # ------------------------------------------------------------
+    ranking_intent = any(
+        phrase in q
+        for phrase in (
+            "highest",
+            "lowest",
+            "largest",
+            "smallest",
+            "best",
+            "worst",
+            "most",
+            "least",
+            "maximum",
+            "minimum",
+            "leading",
+            "ranked",
+            "ranking",
+            "rank",
+        )
+    )
+
+    top_match = re.search(
+        r"\b(?:top|bottom)\s+(\d+)",
+        q,
+    )
+
+    ranking_intent = ranking_intent or bool(top_match)
+
+    # ------------------------------------------------------------
+    # Explicit sort direction
+    # ------------------------------------------------------------
+    #
+    # Default:
+    #   DESC
+    #
+    # Explicit ascending:
+    #   ascending / asc
+    #
+    # Explicit descending:
+    #   descending / desc
+    #
+    # Ranking language such as highest/top/best remains DESC,
+    # while lowest/bottom/worst remains ASC.
+    # ------------------------------------------------------------
+    explicit_ascending = bool(
+        re.search(
+            r"\b(?:ascending|asc)(?:\s+order)?\b",
+            q,
+            re.IGNORECASE,
+        )
+    )
+
+    explicit_descending = bool(
+        re.search(
+            r"\b(?:descending|desc)(?:\s+order)?\b",
+            q,
+            re.IGNORECASE,
+        )
+    )
+
+    if explicit_ascending:
+        order = "ASC"
+    elif explicit_descending:
+        order = "DESC"
+    else:
+        descending = not any(
+            phrase in q
+            for phrase in (
+                "lowest",
+                "smallest",
+                "bottom",
+                "least",
+                "worst",
+            )
+        )
+
+        order = "DESC" if descending else "ASC"
+
+    # Normal grouped aggregations return every group.
+    # Ranking questions return only the requested top/bottom group(s).
+    limit_clause = ""
+
+    if ranking_intent:
+        limit = 1
+
+        if top_match:
+            limit = max(
+                1,
+                min(
+                    int(top_match.group(1)),
+                    100,
+                ),
+            )
+
+        limit_clause = f"LIMIT {limit}"
+
+    alias = "value"
+
+    sql = f"""
+        SELECT
+            {_q(group)} AS {_q(group)},
+            {aggregation}(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS {alias}
+        FROM main_table
+        WHERE {_q(group)} IS NOT NULL
+        GROUP BY {_q(group)}
+        ORDER BY {alias} {order}
+        {limit_clause}
+    """
+
+    result_columns, rows = _execute(
+        dataset,
+        sql,
+    )
 
     if not rows:
         return None
 
-    value = rows[0][0]
-
-    if value is None:
-        return None
-
-    # --------------------------------------------------------
-    # STEP 7 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Format answer
-    # --------------------------------------------------------
-
-    operation_names = {
-        "SUM": "total",
+    label = {
         "AVG": "average",
+        "SUM": "sum",
         "MIN": "minimum",
         "MAX": "maximum",
+        "MEDIAN": "median",
         "COUNT": "count",
-    }
-
-    operation_name = operation_names[
-        operation
-    ]
-
-    display_value = _display_value(
-        value
+    }.get(
+        aggregation,
+        aggregation.lower(),
     )
 
-    answer = (
-        f"The {operation_name} of "
-        f"{selected_column} is "
-        f"{display_value}."
-    )
-
-    # --------------------------------------------------------
-    # STEP 8 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â Return local result
-    # --------------------------------------------------------
-
-    return {
-        "question": question,
-        "type": "local_analysis",
-        "answer": answer,
-        "sql": sql.strip(),
-        "columns": columns,
-        "rows": _serialize_rows(
-            columns,
-            rows,
-        ),
-        "row_count": len(rows),
-        "model": "local",
-        "visualization": {
-            "type": "metric",
-            "x": None,
-            "y": None,
-            "title": f"{operation_name.title()} {selected_column.replace('_', ' ')}",
-            "value": value,
-            "label": selected_column.replace("_", " "),
-        },
-    }
-
-
-
-def _try_trend_query(dataset, question: str) -> dict | None:
-    """
-    Handle time-series trend questions locally using DuckDB.
-
-    Supports daily, weekly, monthly, and yearly aggregation.
-    """
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    trend_keywords = [
-        "trend",
-        "over time",
-        "time series",
-        "historical trend",
-        "change over time",
-        "growth over time",
-        "daily",
-        "daily trend",
-        "weekly",
-        "weekly trend",
-        "monthly",
-        "monthly trend",
-        "yearly",
-        "yearly trend",
-        "annual",
-        "annual trend",
-    ]
-
-    if not any(keyword in q for keyword in trend_keywords):
-        return None
-
-    try:
-        schema_rows = dataset.con.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'main_table'
-            ORDER BY ordinal_position
-            """
-        ).fetchall()
-    except Exception as exc:
-        print("Trend schema lookup failed:", repr(exc))
-        return None
-
-    if not schema_rows:
-        return None
-
-    columns = [row[0] for row in schema_rows]
-
-    # --------------------------------------------------------
-    # Find date/time column
-    # --------------------------------------------------------
-
-    date_column = None
-
-    for column_name, data_type in schema_rows:
-        dtype = str(data_type).upper()
-
-        if (
-            "DATE" in dtype
-            or "TIMESTAMP" in dtype
-            or "DATETIME" in dtype
-        ):
-            date_column = column_name
-            break
-
-    if date_column is None:
-        for candidate in [
-            "date",
-            "datetime",
-            "timestamp",
-            "time",
-            "day",
-        ]:
-            for column in columns:
-                if column.lower() == candidate:
-                    date_column = column
-                    break
-
-            if date_column:
-                break
-
-    if date_column is None:
-        return None
-
-    # --------------------------------------------------------
-    # Detect metric
-    # --------------------------------------------------------
-
-    metric_aliases = {
-        "revenue": [
-            "revenue",
-            "sales",
-            "sale",
-            "income",
-            "earnings",
-        ],
-        "units_sold": [
-            "units_sold",
-            "units",
-            "quantity",
-            "qty",
-        ],
-        "unit_price": [
-            "unit_price",
-            "price",
-        ],
-        "marketing_spend": [
-            "marketing_spend",
-            "marketing",
-            "marketing cost",
-        ],
-        "customer_rating": [
-            "customer_rating",
-            "rating",
-        ],
-        "returns": [
-            "returns",
-            "return",
-        ],
-    }
-
-    metric_column = None
-
-    for metric_name, aliases in metric_aliases.items():
-
-        if metric_name in q or any(
-            alias in q for alias in aliases
-        ):
-            for column in columns:
-                if column.lower() in aliases:
-                    metric_column = column
-                    break
-
-        if metric_column:
-            break
-
-    if metric_column is None:
-        for column in columns:
-            if column.lower() == "revenue":
-                metric_column = column
-                break
-
-    if metric_column is None:
-        return None
-
-    safe_date = date_column.replace('"', '""')
-    safe_metric = metric_column.replace('"', '""')
-
-    # --------------------------------------------------------
-    # Detect time grain
-    # --------------------------------------------------------
-
+    # A single ranking answer gets a natural sentence.
     if (
-        "monthly" in q
-        or "month" in q
-        or "by month" in q
-        or "month-wise" in q
-        or "month wise" in q
-    ):
-        grain = "month"
-        bucket_expression = (
-            f"CAST(date_trunc('month', "
-            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        len(rows) == 1
+        and any(
+            phrase in q
+            for phrase in (
+                "which ",
+                "what ",
+                "highest",
+                "lowest",
+                "top",
+                "bottom",
+            )
         )
-        grain_label = "month"
-
-    elif (
-        "weekly" in q
-        or "week" in q
-        or "by week" in q
-        or "week-wise" in q
-        or "week wise" in q
     ):
-        grain = "week"
-        bucket_expression = (
-            f"CAST(date_trunc('week', "
-            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        row = rows[0]
+        value = _safe_float(
+            row[alias]
         )
-        grain_label = "week"
 
-    elif (
-        "yearly" in q
-        or "annual" in q
-        or "year" in q
-        or "by year" in q
-        or "year-wise" in q
-        or "year wise" in q
-    ):
-        grain = "year"
-        bucket_expression = (
-            f"CAST(date_trunc('year', "
-            f'TRY_CAST("{safe_date}" AS DATE)) AS DATE)'
+        value_text = (
+            f"{value:,.2f}"
+            if value is not None
+            else str(row[alias])
         )
-        grain_label = "year"
 
+        if ranking_intent and len(rows) == 1:
+            ranking_word = "highest" if descending else "lowest"
+
+            answer = (
+                f"{row[group]} has the "
+                f"{ranking_word} {label} "
+                f"{_readable(metric)} "
+                f"at {value_text}."
+            )
+        else:
+            answer = (
+                f"{row[group]} has the "
+                f"{label} {_readable(metric)} "
+                f"at {value_text}."
+            )
     else:
-        grain = "day"
-        bucket_expression = (
-            f'TRY_CAST("{safe_date}" AS DATE)'
-        )
-        grain_label = "date"
+        lines = []
 
-    # --------------------------------------------------------
-    # Build aggregated SQL
-    # --------------------------------------------------------
+        for row in rows:
+            value = _safe_float(
+                row[alias]
+            )
+
+            if value is None:
+                lines.append(
+                    f"{row[group]}: "
+                    f"{row[alias]}"
+                )
+            else:
+                lines.append(
+                    f"{row[group]}: "
+                    f"{value:,.2f}"
+                )
+
+        answer = (
+            f"The {label} "
+            f"{_readable(metric)} by "
+            f"{_readable(group)} is:\n"
+            + "\n".join(lines)
+        )
+
+    return _base_result(
+        question,
+        "local_grouped_analysis",
+        answer,
+        sql,
+        result_columns,
+        rows,
+        {
+            "type": "bar",
+            "x": group,
+            "y": alias,
+            "title": (
+                f"{label.title()} "
+                f"{_readable(metric).title()} by "
+                f"{_readable(group).title()}"
+            ),
+        },
+    )
+
+
+def _try_statistical_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    q = _norm(question)
+
+    if not any(
+        phrase in q
+        for phrase in (
+            "standard deviation",
+            "std",
+            "variance",
+            "statistics",
+            "statistical summary",
+            "quartile",
+            "percentile",
+        )
+    ):
+        return None
+
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+
+    mentioned = [
+        column
+        for column in _find_mentioned_columns(
+            q,
+            columns,
+        )
+        if column in numeric
+    ]
+
+    if mentioned:
+        metric = mentioned[0]
+    elif len(numeric) == 1:
+        metric = numeric[0]
+    else:
+        return None
 
     sql = f"""
         SELECT
-            {bucket_expression} AS "date",
-            SUM(
-                TRY_CAST("{safe_metric}" AS DOUBLE)
-            ) AS "{safe_metric}"
+            COUNT({_q(metric)}) AS count,
+            AVG(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS mean,
+            STDDEV_SAMP(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS stddev,
+            VAR_SAMP(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS variance,
+            MIN(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS min,
+            MEDIAN(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS median,
+            MAX(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS max,
+            quantile_cont(
+                TRY_CAST({_q(metric)} AS DOUBLE),
+                0.25
+            ) AS q1,
+            quantile_cont(
+                TRY_CAST({_q(metric)} AS DOUBLE),
+                0.75
+            ) AS q3
         FROM main_table
-        WHERE TRY_CAST("{safe_date}" AS DATE) IS NOT NULL
-        GROUP BY {bucket_expression}
-        ORDER BY {bucket_expression} ASC
-    """.strip()
+    """
 
-    try:
-        result_columns, result_rows = _execute_sql(
+    result_columns, rows = _execute(
+        dataset,
+        sql,
+    )
+
+    if not rows:
+        return None
+
+    row = rows[0]
+
+    def fmt(name: str) -> str:
+        value = _safe_float(
+            row.get(name)
+        )
+
+        if value is None:
+            return "N/A"
+
+        return f"{value:.2f}"
+
+    answer = (
+        f"Statistics for {_readable(metric)}: "
+        f"count={row['count']}, "
+        f"mean={fmt('mean')}, "
+        f"stddev={fmt('stddev')}, "
+        f"min={fmt('min')}, "
+        f"median={fmt('median')}, "
+        f"max={fmt('max')}, "
+        f"Q1={fmt('q1')}, "
+        f"Q3={fmt('q3')}."
+    )
+
+    return _base_result(
+        question,
+        "statistical_analysis",
+        answer,
+        sql,
+        result_columns,
+        rows,
+    )
+
+
+def _try_percentage_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """
+    Handle percentage/share questions generically.
+
+    Two fundamentally different cases are supported:
+
+    1. Record-share questions:
+       "What percentage of students are in each Department?"
+       "What percentage of customers are in each Region?"
+       "What percentage of records are in each Category?"
+
+       These use COUNT(*) / total COUNT(*).
+
+    2. Numeric-metric share questions:
+       "What percentage of revenue comes from each Region?"
+       "What is the share of sales by Category?"
+
+       These use SUM(metric) / total SUM(metric).
+
+    The distinction is made from the question and dataset schema,
+    without hardcoding any specific dataset columns.
+    """
+
+    q = _norm(question)
+
+    percentage_words = (
+        "percentage",
+        "percent",
+        "%",
+        "share",
+        "proportion",
+    )
+
+    if not any(
+        phrase in q
+        for phrase in percentage_words
+    ):
+        return None
+
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+
+    group = _detect_group_column(
+        q,
+        columns,
+    )
+
+    if not group:
+        return None
+
+    # ------------------------------------------------------------
+    # Detect whether the question refers to records/entities
+    # rather than a numeric metric.
+    # ------------------------------------------------------------
+
+    record_words = (
+        "student",
+        "students",
+        "customer",
+        "customers",
+        "client",
+        "clients",
+        "employee",
+        "employees",
+        "person",
+        "people",
+        "patient",
+        "patients",
+        "user",
+        "users",
+        "record",
+        "records",
+        "row",
+        "rows",
+        "entry",
+        "entries",
+        "observation",
+        "observations",
+        "transaction",
+        "transactions",
+        "item",
+        "items",
+        "product",
+        "products",
+        "application",
+        "applications",
+        "order",
+        "orders",
+    )
+
+    record_share_intent = any(
+        word in q
+        for word in record_words
+    )
+
+    # ------------------------------------------------------------
+    # Detect an explicitly requested numeric metric.
+    # ------------------------------------------------------------
+
+    metric = _detect_metric_column(
+        q,
+        columns,
+        numeric,
+        exclude=group,
+    )
+
+    # ------------------------------------------------------------
+    # Record percentage:
+    #
+    # "What percentage of students are in each Department?"
+    #
+    # IMPORTANT:
+    # Do NOT use a numeric column merely because the word
+    # "percentage" appears in its name.
+    # ------------------------------------------------------------
+
+    if record_share_intent:
+        sql = f"""
+            SELECT
+                {_q(group)} AS {_q(group)},
+                COUNT(*) AS count,
+                COUNT(*) * 100.0
+                    / NULLIF(
+                        (
+                            SELECT COUNT(*)
+                            FROM main_table
+                            WHERE {_q(group)} IS NOT NULL
+                        ),
+                        0
+                    ) AS percentage
+            FROM main_table
+            WHERE {_q(group)} IS NOT NULL
+            GROUP BY {_q(group)}
+            ORDER BY percentage DESC
+        """
+
+        result_columns, rows = _execute(
             dataset,
             sql,
         )
-    except Exception as exc:
-        print("Trend query failed:", repr(exc))
+
+        answer = (
+            f"The percentage of records by "
+            f"{_readable(group)} is:\n"
+            + "\n".join(
+                f"{row[group]}: "
+                f"{_safe_float(row['percentage']):.2f}%"
+                for row in rows
+            )
+        )
+
+        return _base_result(
+            question,
+            "percentage_analysis",
+            answer,
+            sql,
+            result_columns,
+            rows,
+            {
+                "type": "pie",
+                "x": group,
+                "y": "percentage",
+                "title": (
+                    f"Percentage of Records by "
+                    f"{_readable(group).title()}"
+                ),
+            },
+        )
+
+    # ------------------------------------------------------------
+    # Numeric metric share:
+    #
+    # "What percentage of revenue comes from each Region?"
+    # "What is the sales share by Category?"
+    # ------------------------------------------------------------
+
+    if metric:
+        share_language = any(
+            phrase in q
+            for phrase in (
+                "share",
+                "percentage",
+                "percent",
+                "%",
+                "proportion",
+            )
+        )
+
+        if share_language:
+            sql = f"""
+                WITH grouped AS (
+                    SELECT
+                        {_q(group)} AS {_q(group)},
+                        SUM(
+                            TRY_CAST({_q(metric)} AS DOUBLE)
+                        ) AS value
+                    FROM main_table
+                    WHERE {_q(group)} IS NOT NULL
+                    GROUP BY {_q(group)}
+                ),
+                totals AS (
+                    SELECT SUM(value) AS total
+                    FROM grouped
+                )
+                SELECT
+                    {_q(group)},
+                    value,
+                    CASE
+                        WHEN total = 0 THEN 0
+                        ELSE value * 100.0 / total
+                    END AS percentage
+                FROM grouped
+                CROSS JOIN totals
+                ORDER BY percentage DESC
+            """
+
+            result_columns, rows = _execute(
+                dataset,
+                sql,
+            )
+
+            answer = (
+                f"The {_readable(metric)} share by "
+                f"{_readable(group)} is:\n"
+                + "\n".join(
+                    f"{row[group]}: "
+                    f"{_safe_float(row['percentage']):.2f}%"
+                    for row in rows
+                )
+            )
+
+            return _base_result(
+                question,
+                "percentage_analysis",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {
+                    "type": "pie",
+                    "x": group,
+                    "y": "percentage",
+                    "title": (
+                        f"{_readable(metric).title()} "
+                        f"Share by "
+                        f"{_readable(group).title()}"
+                    ),
+                },
+            )
+
+    return None
+
+
+def _try_anomaly_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    q = _norm(question)
+
+    if not any(
+        phrase in q
+        for phrase in (
+            "outlier",
+            "anomal",
+            "unusual",
+        )
+    ):
         return None
 
-    if not result_rows:
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+
+    mentioned = [
+        column
+        for column in _find_mentioned_columns(
+            q,
+            columns,
+        )
+        if column in numeric
+    ]
+
+    if mentioned:
+        metric = mentioned[0]
+    elif len(numeric) == 1:
+        metric = numeric[0]
+    else:
         return None
 
-    serialized_rows = _serialize_rows(
-        result_columns,
-        result_rows,
+    sql = f"""
+        WITH stats AS (
+            SELECT
+                quantile_cont(
+                    TRY_CAST({_q(metric)} AS DOUBLE),
+                    0.25
+                ) AS q1,
+                quantile_cont(
+                    TRY_CAST({_q(metric)} AS DOUBLE),
+                    0.75
+                ) AS q3
+            FROM main_table
+        )
+        SELECT
+            main_table.*,
+            q1,
+            q3
+        FROM main_table
+        CROSS JOIN stats
+        WHERE
+            TRY_CAST({_q(metric)} AS DOUBLE)
+                < q1 - 1.5 * (q3 - q1)
+            OR
+            TRY_CAST({_q(metric)} AS DOUBLE)
+                > q3 + 1.5 * (q3 - q1)
+    """
+
+    result_columns, rows = _execute(
+        dataset,
+        sql,
     )
-
-    metric_result_column = result_columns[1]
-
-    answer_items = []
-
-    for row in serialized_rows[:10]:
-        date_value = row.get("date")
-        metric_value = row.get(
-            metric_result_column
-        )
-
-        answer_items.append(
-            f"{date_value}: {_display_value(metric_value)}"
-        )
 
     answer = (
-        f"Here are the results by {grain_label}: "
-        + ", ".join(answer_items)
+        f"Found {len(rows)} IQR-based "
+        f"outlier record(s) for "
+        f"{_readable(metric)}."
     )
 
-    if len(serialized_rows) > 10:
-        answer += (
-            f", and {len(serialized_rows) - 10:,} "
-            "more results."
+    return _base_result(
+        question,
+        "anomaly_detection",
+        answer,
+        sql,
+        result_columns,
+        rows,
+        {
+            "type": "table",
+            "x": "",
+            "y": "",
+            "title": (
+                f"Outliers in "
+                f"{_readable(metric).title()}"
+            ),
+        },
+    )
+
+
+def _try_trend_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    q = _norm(question)
+    dates = _date_columns(dataset)
+
+    if not dates:
+        return None
+
+    if not any(
+        phrase in q
+        for phrase in (
+            "trend",
+            "over time",
+            "time series",
+            "monthly",
+            "daily",
+            "yearly",
         )
+    ):
+        return None
 
-    visualization = {
-        "type": "line",
-        "x": "date",
-        "y": metric_result_column,
-        "title": (
-            f"{metric_result_column.replace('_', ' ').title()} "
-            f"{grain_label.title()} Trend"
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+
+    date_column = dates[0]
+
+    metric = _detect_metric_column(
+        q,
+        columns,
+        numeric,
+    )
+
+    if not metric:
+        return None
+
+    sql = f"""
+        SELECT
+            CAST({_q(date_column)} AS DATE)
+                AS {_q(date_column)},
+            AVG(
+                TRY_CAST({_q(metric)} AS DOUBLE)
+            ) AS value
+        FROM main_table
+        WHERE {_q(date_column)} IS NOT NULL
+        GROUP BY CAST({_q(date_column)} AS DATE)
+        ORDER BY CAST({_q(date_column)} AS DATE)
+    """
+
+    result_columns, rows = _execute(
+        dataset,
+        sql,
+    )
+
+    if not rows:
+        return None
+
+    return _base_result(
+        question,
+        "trend_analysis",
+        (
+            f"The trend of {_readable(metric)} "
+            f"over {_readable(date_column)} "
+            "is returned in the result."
         ),
-    }
+        sql,
+        result_columns,
+        rows,
+        {
+            "type": "line",
+            "x": date_column,
+            "y": "value",
+            "title": (
+                f"{_readable(metric).title()} "
+                "over Time"
+            ),
+        },
+    )
 
-    return {
-        "question": question,
-        "type": "trend",
-        "answer": answer,
-        "sql": sql,
-        "columns": result_columns,
-        "rows": serialized_rows,
-        "row_count": len(serialized_rows),
-        "model": "local",
-        "visualization": visualization,
-    }
 
-# ============================================================
-# CONTEXTUAL FOLLOW-UP ANALYSIS
-# ============================================================
+def _try_forecast_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """
+    Forecasting intentionally falls through to the Gemini planner.
+    The deterministic engine does not fabricate a forecasting model.
+    """
+    q = _norm(question)
+
+    if not any(
+        phrase in q
+        for phrase in (
+            "forecast",
+            "predict next",
+            "future value",
+            "projected",
+        )
+    ):
+        return None
+
+    return None
 
 
 def _try_main_insight_query(
@@ -3047,3345 +3445,665 @@ def _try_main_insight_query(
     question: str,
 ) -> dict | None:
     """
-    Generate a compact set of dataset-level business insights locally.
-
-    The calculations are performed by DuckDB so large datasets do not need
-    to be sent to Gemini.
+    Generic summary/insight engine. It never assumes revenue,
+    sales, products, regions, or any other business concept.
     """
+    q = _norm(question)
 
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    insight_phrases = [
-        "main insight",
-        "key insight",
-        "main takeaway",
-        "key takeaway",
-        "most important business insight",
-        "most important insight",
-        "important business insight",
-        "business insight",
-        "give me an insight",
-        "give me insights",
-        "what can you conclude",
-        "what does this tell us",
-        "what does that tell us",
-    ]
-
-    if not any(phrase in q for phrase in insight_phrases):
+    if not any(
+        phrase in q
+        for phrase in (
+            "insight",
+            "key finding",
+            "main finding",
+            "important finding",
+            "summary",
+        )
+    ):
         return None
 
-    try:
-        schema_rows = dataset.con.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'main_table'
-            ORDER BY ordinal_position
-            """
-        ).fetchall()
+    numeric = _numeric_columns(dataset)
 
-        columns = [row[0] for row in schema_rows]
+    if not numeric:
+        return None
 
-        if not columns:
-            return None
+    metrics = numeric[:5]
 
-        insights = []
-        result_rows = []
+    select_parts = [
+        (
+            f"AVG(TRY_CAST({_q(column)} AS DOUBLE)) "
+            f"AS {_q(column + '_avg')}"
+        )
+        for column in metrics
+    ]
 
-        # --------------------------------------------------------
-        # Revenue insights
-        # --------------------------------------------------------
+    sql = (
+        "SELECT "
+        + ", ".join(select_parts)
+        + " FROM main_table"
+    )
 
-        revenue_column = next(
-            (
-                column
-                for column in ["revenue", "sales"]
-                if column in columns
-            ),
-            None,
+    result_columns, rows = _execute(
+        dataset,
+        sql,
+    )
+
+    if not rows:
+        return None
+
+    parts = []
+
+    for column in metrics:
+        value = _safe_float(
+            rows[0].get(column + "_avg")
         )
 
-        if revenue_column:
-
-            revenue_id = (
-                '"'
-                + revenue_column.replace('"', '""')
-                + '"'
+        if value is not None:
+            parts.append(
+                f"{_readable(column)}={value:.2f}"
             )
 
-            total_sql = f"""
-            SELECT
-                SUM(
-                    TRY_CAST(
-                        {revenue_id} AS DOUBLE
-                    )
-                ) AS total_revenue
-            FROM main_table
-            """
+    answer = (
+        "A summary of the numeric columns is: "
+        + ", ".join(parts)
+        + "."
+    )
 
-            total_row = dataset.con.execute(
-                total_sql
-            ).fetchone()
+    return _base_result(
+        question,
+        "main_insight",
+        answer,
+        sql,
+        result_columns,
+        rows,
+    )
 
-            total_revenue = (
-                float(total_row[0])
-                if total_row and total_row[0] is not None
-                else 0.0
-            )
 
-            # Prefer region, then product.
-            for group_column in ["region", "product"]:
+# ============================================================================
+# Compatibility wrappers
+# ============================================================================
 
-                if group_column not in columns:
-                    continue
+def _try_business_insight_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """
+    Compatibility name retained for AnalystAgent.
+    It now delegates to the generic grouped engine.
+    """
+    return _try_grouped_query(
+        dataset,
+        question,
+    )
 
-                group_id = (
-                    '"'
-                    + group_column.replace('"', '""')
-                    + '"'
-                )
 
-                sql = f"""
-                SELECT
-                    {group_id} AS "{group_column}",
-                    SUM(
-                        TRY_CAST(
-                            {revenue_id} AS DOUBLE
-                        )
-                    ) AS revenue
-                FROM main_table
-                WHERE {group_id} IS NOT NULL
-                GROUP BY {group_id}
-                ORDER BY revenue DESC
-                """
+def _try_numeric_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """
+    Compatibility name retained for AnalystAgent.
+    """
+    return _try_local_query(
+        dataset,
+        question,
+    )
 
-                rows = dataset.con.execute(sql).fetchall()
 
-                if not rows:
-                    continue
+# ============================================================================
+# Conversation / contextual follow-ups
+# ============================================================================
 
-                top_group = _display_value(rows[0][0])
-                top_value = float(rows[0][1])
+def _normalize_conversation_history(
+    history,
+) -> list[dict]:
+    if not history:
+        return []
 
-                share = (
-                    top_value / total_revenue * 100
-                    if total_revenue
-                    else 0.0
-                )
+    normalized = []
 
-                label = group_column.replace("_", " ")
+    for item in history:
+        if not isinstance(item, dict):
+            continue
 
-                insights.append(
-                    f"{top_group} has the highest total "
-                    f"{revenue_column.replace('_', ' ')} among "
-                    f"{label}s, at {top_value:,.0f} "
-                    f"({share:.1f}% of total revenue)."
-                )
+        role = item.get("role")
+        text = item.get("text")
 
-                result_rows.extend(
-                    [
-                        {
-                            "insight_type": f"top_{group_column}",
-                            "dimension": top_group,
-                            "value": top_value,
-                        }
-                    ]
-                )
+        if (
+            role not in ("user", "assistant")
+            or not isinstance(text, str)
+            or not text.strip()
+        ):
+            continue
 
-        # --------------------------------------------------------
-        # Return-rate insight
-        # --------------------------------------------------------
-
-        returns_column = next(
-            (
-                column
-                for column in ["returns", "returned"]
-                if column in columns
-            ),
-            None,
-        )
-
-        units_column = next(
-            (
-                column
-                for column in [
-                    "units_sold",
-                    "units",
-                    "total_units",
-                ]
-                if column in columns
-            ),
-            None,
-        )
-
-        if returns_column and units_column:
-
-            returns_id = (
-                '"'
-                + returns_column.replace('"', '""')
-                + '"'
-            )
-
-            units_id = (
-                '"'
-                + units_column.replace('"', '""')
-                + '"'
-            )
-
-            return_sql = f"""
-            SELECT
-                (
-                    SUM(
-                        TRY_CAST(
-                            {returns_id} AS DOUBLE
-                        )
-                    ) * 100.0
-                ) / NULLIF(
-                    SUM(
-                        TRY_CAST(
-                            {units_id} AS DOUBLE
-                        )
-                    ),
-                    0
-                ) AS return_percentage
-            FROM main_table
-            """
-
-            return_row = dataset.con.execute(
-                return_sql
-            ).fetchone()
-
-            if return_row and return_row[0] is not None:
-
-                return_percentage = float(return_row[0])
-
-                insights.append(
-                    f"Approximately {return_percentage:.2f}% "
-                    f"of units were returned."
-                )
-
-                result_rows.append(
-                    {
-                        "insight_type": "return_rate",
-                        "dimension": "returned units",
-                        "value": return_percentage,
-                    }
-                )
-
-        # --------------------------------------------------------
-        # Final result
-        # --------------------------------------------------------
-
-        if not insights:
-            return None
-
-        answer = "Main insights from the dataset:\n\n" + "\n".join(
-            f"- {insight}"
-            for insight in insights
-        )
-
-        return {
-            "question": question,
-            "type": "business_insight",
-            "answer": answer,
-            "sql": None,
-            "columns": [
-                "insight_type",
-                "dimension",
-                "value",
-            ],
-            "rows": result_rows,
-            "row_count": len(result_rows),
-            "model": "local",
-            "visualization": {
-                "type": "table",
-                "title": "Main Dataset Insights",
-            },
+        entry = {
+            "role": role,
+            "text": text.strip(),
         }
+
+        if item.get("result") is not None:
+            entry["result"] = item["result"]
+
+        normalized.append(entry)
+
+    return normalized
+
+
+def _try_contextual_followup(
+    dataset: Dataset,
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> dict | None:
+    """
+    Lightweight follow-up handling.
+
+    It only reuses an explicitly supplied previous result. Questions
+    that need fresh interpretation fall through to the generic engine.
+    """
+    history = _normalize_conversation_history(
+        conversation_history
+    )
+
+    if not history:
+        return None
+
+    q = _norm(question)
+
+    if not any(
+        marker in q
+        for marker in (
+            "why",
+            "explain",
+            "what does that",
+            "what about",
+            "and what",
+            "how about",
+            "tell me more",
+        )
+    ):
+        return None
+
+    previous = next(
+        (
+            item
+            for item in reversed(history)
+            if item.get("role") == "assistant"
+        ),
+        None,
+    )
+
+    if not previous:
+        return None
+
+    previous_result = previous.get("result")
+
+    if not isinstance(previous_result, dict):
+        return None
+
+    answer = (
+        "Based on the previous analysis: "
+        + str(
+            previous_result.get(
+                "answer",
+                "",
+            )
+        )
+    )
+
+    return _base_result(
+        question,
+        "contextual_followup",
+        answer,
+        previous_result.get(
+            "sql",
+            "",
+        ),
+        previous_result.get(
+            "columns",
+            [],
+        ),
+        previous_result.get(
+            "rows",
+            [],
+        ),
+        previous_result.get(
+            "visualization",
+        ),
+    )
+
+
+# ============================================================================
+# Gemini fallback
+# ============================================================================
+
+def _schema_text(dataset: Dataset) -> str:
+    lines = [
+        f"Dataset: {getattr(dataset, 'filename', 'dataset')}",
+        f"Rows: {getattr(dataset, 'row_count', '?')}",
+        "Columns:",
+    ]
+
+    for item in _schema(dataset):
+        lines.append(
+            f'- "{item["name"]}" ({item["type"]})'
+        )
+
+    return "\n".join(lines)
+
+
+def _conversation_text(history) -> str:
+    normalized = _normalize_conversation_history(
+        history
+    )
+
+    if not normalized:
+        return "No previous conversation."
+
+    lines = []
+
+    for item in normalized[-6:]:
+        lines.append(
+            f'{item["role"].title()}: '
+            f'{item["text"]}'
+        )
+
+    return "\n".join(lines)
+
+
+def _generate_sql(
+    dataset: Dataset,
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> str:
+    if _client is None:
+        raise RuntimeError(
+            "Gemini is not configured."
+        )
+
+    prompt = f"""
+You are the generic SQL planning engine for an AI Data Analyst application.
+
+TABLE:
+main_table
+
+SCHEMA:
+{_schema_text(dataset)}
+
+RECENT CONVERSATION:
+{_conversation_text(conversation_history)}
+
+CURRENT QUESTION:
+{question}
+
+TASK:
+Determine whether the question can be answered using the supplied schema.
+
+If the question can be answered using the available columns:
+Return exactly ONE valid read-only DuckDB SQL query.
+
+If the question requires a column or concept that does NOT exist in the
+schema and cannot be safely mapped to an existing column by exact name
+or clear semantic equivalence:
+Return exactly:
+
+UNANSWERABLE
+
+RULES:
+1. Query only main_table.
+2. Use only columns present in the schema.
+3. Never invent a column.
+4. Never silently substitute one metric for another.
+5. Do not assume that similarly named metrics are equivalent.
+6. Quote column names with double quotes.
+7. Use TRY_CAST(... AS DOUBLE) for numeric calculations where useful.
+8. Return one SQL statement only when the question is answerable.
+9. SELECT and WITH ... SELECT are allowed.
+10. Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE,
+    COPY, ATTACH, DETACH, INSTALL, LOAD, or PRAGMA.
+11. Return either SQL only or the exact word UNANSWERABLE.
+"""
+
+    response = _client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
+
+    text = getattr(
+        response,
+        "text",
+        None,
+    )
+
+    raw_text = str(text or "").strip()
+
+    # Gemini may explicitly report that the requested concept
+    # is not represented by the dataset schema.
+    if raw_text.upper().strip("`* \n\r\t") == "UNANSWERABLE":
+        return "UNANSWERABLE"
+
+    sql = _clean_sql(
+        raw_text
+    )
+
+    if not _is_read_only_sql(sql):
+        raise ValueError(
+            "Generated SQL failed read-only validation."
+        )
+
+    return sql
+
+
+def _gemini_result(
+    dataset: Dataset,
+    question: str,
+    conversation_history=None,
+) -> dict | None:
+    try:
+        sql = _generate_sql(
+            dataset,
+            question,
+            conversation_history,
+        )
+
+        # The SQL planner can explicitly report that the requested
+        # concept is not represented by the dataset schema.
+        if sql.strip().upper() == "UNANSWERABLE":
+            columns = _columns(dataset)
+
+            numeric = _numeric_columns(dataset)
+
+            readable_numeric = [
+                _readable(column)
+                for column in numeric
+            ]
+
+            if readable_numeric:
+                available = ", ".join(
+                    readable_numeric[:12]
+                )
+
+                if len(readable_numeric) > 12:
+                    available += ", ..."
+
+                answer = (
+                    "I cannot answer this question because "
+                    "the requested field or concept is not "
+                    "available in the dataset schema. "
+                    f"Available numeric fields include: "
+                    f"{available}."
+                )
+            else:
+                answer = (
+                    "I cannot answer this question because "
+                    "the requested field or concept is not "
+                    "available in the dataset schema."
+                )
+
+            return _base_result(
+                question,
+                "llm_analysis",
+                answer,
+                None,
+                [],
+                [],
+            )
+
+        result_columns, rows = _execute(
+            dataset,
+            sql,
+        )
+
+        if not rows:
+            answer = (
+                "The query executed successfully "
+                "but returned no rows."
+            )
+
+        elif (
+            len(rows) == 1
+            and len(rows[0]) == 1
+        ):
+            value = next(
+                iter(rows[0].values())
+            )
+
+            if isinstance(
+                value,
+                float,
+            ):
+                answer = (
+                    f"The result is "
+                    f"{value:,.2f}."
+                )
+            else:
+                answer = (
+                    f"The result is "
+                    f"{value}."
+                )
+
+        else:
+            preview = rows[:10]
+            answer = (
+                f"The analysis returned "
+                f"{len(rows)} row(s). "
+                f"Here are the first results: "
+                f"{preview}"
+            )
+
+        return _base_result(
+            question,
+            "llm_analysis",
+            answer,
+            sql,
+            result_columns,
+            rows,
+        )
 
     except Exception as exc:
         print(
-            "Main insight query failed:",
+            "Gemini fallback error:",
             repr(exc),
         )
         return None
 
 
-def _normalize_conversation_history(conversation_history: list[dict] | None) -> list[dict]:
-    """Normalize chat history from text/content/answer based clients."""
-    if not isinstance(conversation_history, list):
-        return []
-    normalized = []
-    for message in conversation_history:
-        if not isinstance(message, dict):
-            continue
-        item = dict(message)
-        text_value = item.get("text") or item.get("content")
-        if not text_value and item.get("role") == "assistant":
-            text_value = item.get("answer")
-        if isinstance(text_value, list):
-            parts = []
-            for part in text_value:
-                if isinstance(part, str):
-                    parts.append(part)
-                elif isinstance(part, dict):
-                    value = part.get("text") or part.get("content")
-                    if value:
-                        parts.append(str(value))
-            text_value = " ".join(parts)
-        if text_value is not None:
-            item["text"] = str(text_value)
-        if item.get("role") == "assistant" and isinstance(item.get("result"), dict):
-            result = item["result"]
-            if not item.get("rows") and isinstance(result.get("rows"), list):
-                item["rows"] = result["rows"]
-            if not item.get("visualization") and result.get("visualization") is not None:
-                item["visualization"] = result["visualization"]
-            if not item.get("sql") and result.get("sql"):
-                item["sql"] = result["sql"]
-            if not item.get("resultType") and result.get("type"):
-                item["resultType"] = result["type"]
-        normalized.append(item)
-    return normalized
+# ============================================================================
+# Main compatibility entry point
+# ============================================================================
 
-
-def _try_contextual_followup(
-    dataset,
-    question: str,
-    conversation_history: list[dict] | None = None,
-) -> dict | None:
-    """
-    Handle conversational follow-up questions locally.
-
-    Examples:
-        User: What is the total revenue?
-        User: Can you explain that?
-
-        User: Show revenue by region.
-        User: Which one is highest?
-
-        User: What is the correlation between revenue
-               and marketing spend?
-        User: What does that mean?
-
-    This prevents simple contextual questions from unnecessarily
-    falling back to Gemini.
-    """
-
-    if not conversation_history:
-        return None
-
-    if not isinstance(question, str):
-        return None
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # Follow-up detection
-    # --------------------------------------------------------
-
-    # "Main insight" is a dataset-level analytical request, not an
-    # explanation of the previous result. It is handled by the dedicated
-    # main-insight tool in the agent planner.
-    main_insight_phrases = [
-        "main insight",
-        "key insight",
-        "main takeaway",
-        "key takeaway",
-        "give me an insight",
-        "give me insights",
-        "what can you conclude",
-        "what does this tell us",
-        "what does that tell us",
-    ]
-
-    if any(phrase in q for phrase in main_insight_phrases):
-        return None
-
-    explanation_phrases = [
-        "explain that",
-        "explain this",
-        "explain it",
-        "explain these results",
-        "explain the results",
-        "explain those results",
-        "what do these results mean",
-        "what do the results mean",
-        "what does this result mean",
-        "can you explain",
-        "could you explain",
-        "please explain",
-        "what does that mean",
-        "what does this mean",
-        "what does it mean",
-        "tell me more",
-        "what is the main insight",
-        "what's the main insight",
-        "what is the key insight",
-        "what's the key insight",
-        "main insight",
-        "key insight",
-        "give me an insight",
-        "what can you conclude",
-        "what can we conclude",
-        "what does this tell us",
-        "what does that tell us",
-        "summarize these results",
-        "summarize the results",
-        "give me a summary of these results",
-        "explain the trend",
-        "explain this trend",
-        "what does this trend mean",
-        "describe the trend",
-        "what is the trend telling us",
-        "why is that",
-        "why is this",
-        "why",
-        "how did you calculate that",
-        "how was that calculated",
-        "how did you get that",
-        "explain the difference",
-        "explain the main difference",
-        "difference in these results",
-        "difference between these results",
-        "differences in these results",
-        "differences between these results",
-        "compare these results",
-        "compare the results",
-        "comparison of these results",
-        "main difference",
-    ]
-
-    ranking_phrases = [
-        "which one is highest",
-        "which is highest",
-        "which one is the highest",
-        "which is the highest",
-        "what is highest",
-        "which one is lowest",
-        "which is lowest",
-        "which one is the lowest",
-        "which is the lowest",
-        "what is lowest",
-        "which category contributes the most",
-        "which category contributes most",
-        "which contributes the most",
-        "which category has the highest",
-        "which category is highest",
-    ]
-
-    is_explanation = any(
-        phrase in q
-        for phrase in explanation_phrases
-    )
-
-    is_ranking = any(
-        phrase in q
-        for phrase in ranking_phrases
-    )
-
-    comparison_phrases = [
-        "explain the difference",
-        "explain the main difference",
-        "difference in these results",
-        "difference between these results",
-        "differences in these results",
-        "differences between these results",
-        "compare these results",
-        "compare the results",
-        "comparison of these results",
-        "main difference",
-    ]
-
-    is_comparison = any(
-        phrase in q
-        for phrase in comparison_phrases
-    )
-
-    if not is_explanation and not is_ranking and not is_comparison:
-        return None
-
-    # --------------------------------------------------------
-    # Find the most recent assistant result
-    # --------------------------------------------------------
-
-    previous_assistant = None
-
-    for message in reversed(conversation_history):
-        if not isinstance(message, dict):
-            continue
-
-        if message.get("role") == "assistant":
-            previous_assistant = message
-            break
-
-    if not previous_assistant:
-        return None
-
-    previous_text = (
-        str(
-            previous_assistant.get("text")
-            or previous_assistant.get("content")
-            or previous_assistant.get("answer")
-            or ""
-        )
-        .strip()
-    )
-
-    previous_rows = previous_assistant.get("rows")
-
-    if not isinstance(previous_rows, list):
-        previous_rows = []
-
-    previous_visualization = (
-        previous_assistant.get("visualization")
-    )
-
-    previous_result_type = (
-        previous_assistant.get("resultType")
-    )
-
-    # --------------------------------------------------------
-    # Nothing useful to explain
-    # --------------------------------------------------------
-
-    if not previous_text and not previous_rows:
-        return None
-
-    # --------------------------------------------------------
-    # FAST-PATH COMPARISON FOLLOW-UP
-    # --------------------------------------------------------
-    # Compare the rows from the previous analysis locally.
-    # This prevents questions such as "Explain the main difference
-    # in these results" from being reinterpreted as a new SQL query.
-    # --------------------------------------------------------
-
-    if is_comparison and previous_rows:
-        comparison_rows = [
-            row
-            for row in previous_rows
-            if isinstance(row, dict)
-        ]
-
-        if comparison_rows:
-            # Find numeric columns.
-            numeric_columns = []
-
-            for key in comparison_rows[0].keys():
-                values = [
-                    row.get(key)
-                    for row in comparison_rows
-                    if isinstance(row.get(key), (int, float))
-                    and not isinstance(row.get(key), bool)
-                ]
-
-                if values:
-                    numeric_columns.append(key)
-
-            # Find a useful label/category column.
-            label_column = None
-
-            for key in comparison_rows[0].keys():
-                values = [
-                    row.get(key)
-                    for row in comparison_rows
-                    if row.get(key) is not None
-                    and not isinstance(row.get(key), (int, float))
-                    and not isinstance(row.get(key), bool)
-                ]
-
-                if len(set(map(str, values))) > 1:
-                    label_column = key
-                    break
-
-            # If no obvious label exists, use the first non-numeric column.
-            if label_column is None:
-                for key in comparison_rows[0].keys():
-                    if key not in numeric_columns:
-                        label_column = key
-                        break
-
-            # Prefer a numeric metric explicitly mentioned in the question.
-            primary_metric = None
-
-            for key in numeric_columns:
-                readable_key = str(key).replace("_", " ").lower()
-
-                if readable_key in q or any(
-                    word in q
-                    for word in readable_key.split()
-                    if len(word) > 3
-                ):
-                    primary_metric = key
-                    break
-
-            if primary_metric is None and numeric_columns:
-                primary_metric = numeric_columns[0]
-
-            if primary_metric is not None:
-                metric_rows = [
-                    row
-                    for row in comparison_rows
-                    if isinstance(
-                        row.get(primary_metric),
-                        (int, float),
-                    )
-                    and not isinstance(
-                        row.get(primary_metric),
-                        bool,
-                    )
-                ]
-
-                if len(metric_rows) >= 2:
-                    highest_row = max(
-                        metric_rows,
-                        key=lambda row: row.get(primary_metric),
-                    )
-
-                    lowest_row = min(
-                        metric_rows,
-                        key=lambda row: row.get(primary_metric),
-                    )
-
-                    highest_value = highest_row.get(primary_metric)
-                    lowest_value = lowest_row.get(primary_metric)
-
-                    difference = highest_value - lowest_value
-
-                    if lowest_value != 0:
-                        percentage_difference = (
-                            abs(difference)
-                            / abs(lowest_value)
-                        ) * 100
-                    else:
-                        percentage_difference = None
-
-                    metric_name = (
-                        str(primary_metric)
-                        .replace("_", " ")
-                        .strip()
-                    )
-
-                    highest_label = (
-                        highest_row.get(label_column)
-                        if label_column
-                        else "the highest group"
-                    )
-
-                    lowest_label = (
-                        lowest_row.get(label_column)
-                        if label_column
-                        else "the lowest group"
-                    )
-
-                    if isinstance(highest_value, float):
-                        highest_display = f"{highest_value:,.2f}"
-                    else:
-                        highest_display = f"{highest_value:,}"
-
-                    if isinstance(lowest_value, float):
-                        lowest_display = f"{lowest_value:,.2f}"
-                    else:
-                        lowest_display = f"{lowest_value:,}"
-
-                    if isinstance(difference, float):
-                        difference_display = f"{abs(difference):,.2f}"
-                    else:
-                        difference_display = f"{abs(difference):,}"
-
-                    answer = (
-                        f"The main difference is in {metric_name}. "
-                        f"{highest_label} has the highest value at "
-                        f"{highest_display}, while {lowest_label} "
-                        f"has the lowest at {lowest_display}. "
-                        f"That is a difference of "
-                        f"{difference_display}"
-                    )
-
-                    if percentage_difference is not None:
-                        answer += (
-                            f", or approximately "
-                            f"{percentage_difference:.1f}%"
-                            f" higher than the lowest value."
-                        )
-                    else:
-                        answer += "."
-
-                    # Add the next numeric metric when available.
-                    additional_metrics = [
-                        key
-                        for key in numeric_columns
-                        if key != primary_metric
-                    ]
-
-                    if additional_metrics:
-                        secondary_metric = additional_metrics[0]
-
-                        secondary_rows = [
-                            row
-                            for row in comparison_rows
-                            if isinstance(
-                                row.get(secondary_metric),
-                                (int, float),
-                            )
-                            and not isinstance(
-                                row.get(secondary_metric),
-                                bool,
-                            )
-                        ]
-
-                        if len(secondary_rows) >= 2:
-                            secondary_high = max(
-                                secondary_rows,
-                                key=lambda row: row.get(
-                                    secondary_metric
-                                ),
-                            )
-
-                            secondary_low = min(
-                                secondary_rows,
-                                key=lambda row: row.get(
-                                    secondary_metric
-                                ),
-                            )
-
-                            secondary_name = (
-                                str(secondary_metric)
-                                .replace("_", " ")
-                                .strip()
-                            )
-
-                            secondary_high_label = (
-                                secondary_high.get(label_column)
-                                if label_column
-                                else "the highest group"
-                            )
-
-                            secondary_low_label = (
-                                secondary_low.get(label_column)
-                                if label_column
-                                else "the lowest group"
-                            )
-
-                            secondary_high_value = (
-                                secondary_high.get(secondary_metric)
-                            )
-
-                            secondary_low_value = (
-                                secondary_low.get(secondary_metric)
-                            )
-
-                            if isinstance(
-                                secondary_high_value,
-                                float,
-                            ):
-                                secondary_high_display = (
-                                    f"{secondary_high_value:,.2f}"
-                                )
-                            else:
-                                secondary_high_display = (
-                                    f"{secondary_high_value:,}"
-                                )
-
-                            if isinstance(
-                                secondary_low_value,
-                                float,
-                            ):
-                                secondary_low_display = (
-                                    f"{secondary_low_value:,.2f}"
-                                )
-                            else:
-                                secondary_low_display = (
-                                    f"{secondary_low_value:,}"
-                                )
-
-                            answer += (
-                                f" For {secondary_name}, "
-                                f"{secondary_high_label} is highest at "
-                                f"{secondary_high_display}, while "
-                                f"{secondary_low_label} is lowest at "
-                                f"{secondary_low_display}."
-                            )
-
-                    return {
-                        "question": question,
-                        "type": "contextual_followup",
-                        "answer": answer,
-                        "sql": previous_assistant.get("sql"),
-                        "columns": (
-                            previous_assistant.get("columns")
-                            or list(comparison_rows[0].keys())
-                        ),
-                        "rows": previous_rows,
-                        "row_count": len(previous_rows),
-                        "model": "local",
-                        "visualization": previous_visualization,
-                    }
-
-    # --------------------------------------------------------
-    # FAST-PATH CONTEXTUAL EXPLANATION
-    # --------------------------------------------------------
-    # Simple explanation follow-ups must never reach the SQL/Gemini
-    # fallback. Return the previous result immediately using only the
-    # conversation payload. This avoids expensive dataset work and also
-    # makes the follow-up resilient if a previous SQL field is missing.
-    # --------------------------------------------------------
-    # Scenario / projection follow-up
-    # --------------------------------------------------------
-    scenario_text = previous_text.lower()
-
-    scenario_markers = [
-        "projected",
-        "projection",
-        "increase by",
-        "decrease by",
-        "after a",
-        "if revenue",
-        "if sales",
-        "scenario",
-    ]
-
-    if is_explanation and any(
-        marker in scenario_text
-        for marker in scenario_markers
-    ):
-        answer = (
-            "This follows directly from the previous scenario analysis. "
-            f"{previous_text}"
-        )
-
-        return {
-            "question": question,
-            "type": "contextual_followup",
-            "answer": answer,
-            "sql": previous_assistant.get("sql"),
-            "columns": previous_assistant.get("columns") or [],
-            "rows": previous_rows,
-            "row_count": len(previous_rows),
-            "model": "local",
-            "visualization": previous_visualization,
-        }
-
-    if is_explanation:
-        # Explain a previous single-value analysis locally.
-        answer = ""
-
-        if len(previous_rows) == 1 and isinstance(previous_rows[0], dict):
-            row = previous_rows[0]
-
-            numeric_values = [
-                (key, value)
-                for key, value in row.items()
-                if isinstance(value, (int, float))
-                and not isinstance(value, bool)
-            ]
-
-            if numeric_values:
-                metric_key, metric_value = numeric_values[0]
-                readable_metric = str(metric_key).replace("_", " ")
-
-                previous_sql = str(
-                    previous_assistant.get("sql") or ""
-                ).strip()
-
-                import re
-
-                sum_match = re.search(
-                    r'SUM\s*\(\s*(?:TRY_CAST\s*\(\s*)?["`]?([A-Za-z_][A-Za-z0-9_]*)',
-                    previous_sql,
-                    re.IGNORECASE,
-                )
-                avg_match = re.search(
-                    r'AVG\s*\(\s*(?:TRY_CAST\s*\(\s*)?["`]?([A-Za-z_][A-Za-z0-9_]*)', 
-                    previous_sql,
-                    re.IGNORECASE,
-                )
-
-                correlation_context = (
-                    "correlation" in previous_text.lower()
-                    or "correlation" in str(previous_result_type).lower()
-                    or (
-                        isinstance(previous_visualization, dict)
-                        and str(previous_visualization.get("type", "")).lower()
-                        in {"scatter", "correlation"}
-                    )
-                )
-
-                if correlation_context:
-                    if metric_value > 0.8:
-                        strength = "very strong"
-                    elif metric_value > 0.6:
-                        strength = "strong"
-                    elif metric_value > 0.4:
-                        strength = "moderate"
-                    elif metric_value > 0.2:
-                        strength = "weak"
-                    else:
-                        strength = "very weak"
-
-                    direction = (
-                        "positive"
-                        if metric_value > 0
-                        else "negative"
-                        if metric_value < 0
-                        else "no"
-                    )
-
-                    answer = (
-                        f"A correlation of {metric_value:.2f} indicates a "
-                        f"{strength} {direction} linear relationship between "
-                        f"the variables in the previous analysis. "
-                    )
-
-                    if metric_value > 0:
-                        answer += (
-                            "In this dataset, higher values of one variable "
-                            "tend to be associated with higher values of the "
-                            "other variable. "
-                        )
-                    elif metric_value < 0:
-                        answer += (
-                            "In this dataset, higher values of one variable "
-                            "tend to be associated with lower values of the "
-                            "other variable. "
-                        )
-                    else:
-                        answer += (
-                            "The variables show little to no linear "
-                            "relationship in this dataset. "
-                        )
-
-                    answer += (
-                        "Correlation indicates association, not causation, "
-                        "so this result alone does not establish that one "
-                        "variable causes changes in the other."
-                    )
-
-                elif sum_match:
-                    source_column = sum_match.group(1)
-                    readable_source = source_column.replace("_", " ")
-                    answer = (
-                        f"The total {readable_source} is "
-                        f"{metric_value:,.0f}. "
-                        f"This was calculated by summing all values in "
-                        f"the '{readable_source}' column across the dataset. "
-                        f"The SQL operation used was "
-                        f"SUM({source_column}), which produced "
-                        f"{metric_value:,.0f}."
-                    )
-                elif avg_match:
-                    source_column = avg_match.group(1)
-                    readable_source = source_column.replace("_", " ")
-                    answer = (
-                        f"The average {readable_source} is "
-                        f"{metric_value:,.2f}. "
-                        f"This was calculated using the average of the "
-                        f"'{readable_source}' column."
-                    )
-                else:
-                    answer = (
-                        f"The previous analysis calculated "
-                        f"{readable_metric} as {metric_value:,.2f}. "
-                        f"This value came directly from the previous "
-                        f"analysis result."
-                    )
-
-        # Explain multi-row trend results using the previous rows.
-        if not answer and (
-            "trend" in q
-            or (
-                isinstance(previous_visualization, dict)
-                and previous_visualization.get("type") in {"line", "forecast"}
-            )
-            or previous_result_type in {"trend", "forecast"}
-        ) and previous_rows:
-            numeric_points = []
-
-            for row in previous_rows:
-                if not isinstance(row, dict):
-                    continue
-
-                numeric_values = [
-                    value
-                    for value in row.values()
-                    if isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                ]
-
-                if numeric_values:
-                    numeric_points.append(float(numeric_values[-1]))
-
-            if numeric_points:
-                first_value = numeric_points[0]
-                last_value = numeric_points[-1]
-                highest_value = max(numeric_points)
-                lowest_value = min(numeric_points)
-
-                if last_value > first_value:
-                    direction = "an upward overall movement"
-                elif last_value < first_value:
-                    direction = "a downward overall movement"
-                else:
-                    direction = "little overall change"
-
-                answer = (
-                    f"The trend shows {direction} across the available "
-                    f"{len(numeric_points):,} observations. "
-                    f"The values range from {lowest_value:,.0f} to "
-                    f"{highest_value:,.0f}. "
-                    f"The first observed value is {first_value:,.0f}, "
-                    f"while the latest observed value is {last_value:,.0f}."
-                )
-
-        if not answer:
-            answer = (
-                "The previous analysis returned: "
-                f"{previous_text}"
-            )
-
-            if previous_rows:
-                answer += (
-                    f" The analysis returned {len(previous_rows):,} "
-                    "result row"
-                    + ("" if len(previous_rows) == 1 else "s")
-                    + "."
-                )
-
-        return {
-            "question": question,
-            "type": "contextual_followup",
-            "answer": answer,
-            "sql": previous_assistant.get("sql"),
-            "columns": [],
-            "rows": [],
-            "row_count": 0,
-            "model": "local",
-            "visualization": None,
-        }
-
-    # For a generic explanation request, preserve the previous analytical
-    # result instead of allowing the normal SQL/local-query engine to
-    # reinterpret the phrase as a brand-new question. This is especially
-    # important for multi-row results such as data-quality tables.
-    # Single-row numeric results continue through the detailed calculation
-    # branch below.
-    if is_explanation and len(previous_rows) != 1:
-        answer = (
-            "The previous result came from the analysis immediately before "
-            "this question. In particular, I found: "
-            f"{previous_text}"
-        )
-        return {
-            "question": question,
-            "type": "contextual_followup",
-            "answer": answer,
-            "sql": previous_assistant.get("sql"),
-            "columns": [],
-            "rows": previous_rows,
-            "row_count": len(previous_rows),
-            "model": "local",
-            "visualization": previous_visualization,
-        }
-
-    # --------------------------------------------------------
-    # Ranking follow-up
-    # --------------------------------------------------------
-
-    if is_ranking and previous_rows:
-
-        valid_rows = [
-            row
-            for row in previous_rows
-            if isinstance(row, dict)
-        ]
-
-        if not valid_rows:
-            return None
-
-        numeric_candidates = []
-
-        for row in valid_rows:
-
-            for key, value in row.items():
-
-                if isinstance(value, bool):
-                    continue
-
-                if isinstance(value, (int, float)):
-                    numeric_candidates.append(
-                        (row, key, float(value))
-                    )
-
-        if not numeric_candidates:
-            return None
-
-        # Prefer a value column rather than an identifier.
-        preferred = [
-            item
-            for item in numeric_candidates
-            if any(
-                keyword in item[1].lower()
-                for keyword in [
-                    "revenue",
-                    "sales",
-                    "total",
-                    "amount",
-                    "value",
-                    "units",
-                ]
-            )
-        ]
-
-        candidates = (
-            preferred
-            if preferred
-            else numeric_candidates
-        )
-
-        if "highest" in q or "most" in q:
-
-            selected = max(
-                candidates,
-                key=lambda item: item[2],
-            )
-
-            direction = "highest"
-
-        else:
-
-            selected = min(
-                candidates,
-                key=lambda item: item[2],
-            )
-
-            direction = "lowest"
-
-        row, value_column, value = selected
-
-        category_columns = [
-            key
-            for key in row.keys()
-            if key != value_column
-        ]
-
-        if category_columns:
-            category_column = category_columns[0]
-            category_value = row.get(
-                category_column
-            )
-
-            answer = (
-                f"The {direction} value is "
-                f"{value:,.2f}, belonging to "
-                f"{category_column.replace('_', ' ')} "
-                f"'{category_value}'."
-            )
-
-        else:
-            answer = (
-                f"The {direction} value is "
-                f"{value:,.2f}."
-            )
-
-        return {
-            "question": question,
-            "type": "contextual_followup",
-            "answer": answer,
-            "sql": previous_assistant.get("sql"),
-            "columns": list(row.keys()),
-            "rows": previous_rows,
-            "row_count": len(previous_rows),
-            "model": "local",
-            "visualization": previous_visualization,
-        }
-
-    # --------------------------------------------------------
-    # Explanation follow-up
-    # --------------------------------------------------------
-
-    if is_explanation:
-
-        # ----------------------------------------------------
-        # Scenario / projection follow-up
-        # ----------------------------------------------------
-        scenario_text = previous_text.lower()
-
-        scenario_markers = [
-            "projected",
-            "projection",
-            "increase by",
-            "decrease by",
-            "after a",
-            "if revenue",
-            "if sales",
-            "scenario",
-        ]
-
-        if any(
-            marker in scenario_text
-            for marker in scenario_markers
-        ):
-            answer = (
-                "This follows directly from the previous scenario analysis. "
-                f"{previous_text}"
-            )
-
-            return {
-                "question": question,
-                "type": "contextual_followup",
-                "answer": answer,
-                "sql": previous_assistant.get("sql"),
-                "columns": previous_assistant.get("columns") or [],
-                "rows": previous_rows,
-                "row_count": len(previous_rows),
-                "model": "local",
-                "visualization": previous_visualization,
-            }
-
-        # ----------------------------------------------------
-        # Single numeric result
-        # ----------------------------------------------------
-
-
-        if len(previous_rows) == 1:
-
-            row = previous_rows[0]
-
-            if isinstance(row, dict):
-
-                numeric_values = []
-
-                for key, value in row.items():
-
-                    if isinstance(value, bool):
-                        continue
-
-                    if isinstance(
-                        value,
-                        (int, float),
-                    ):
-                        numeric_values.append(
-                            (key, value)
-                        )
-
-                if numeric_values:
-
-                    metric_key, metric_value = numeric_values[0]
-
-                    previous_sql = str(
-                        previous_assistant.get("sql")
-                        or ""
-                    ).strip()
-
-                    # Always initialize this variable because the SQL may
-                    # already be present in conversation history.
-                    source_column = None
-
-                    if not previous_sql:
-                        # The frontend may send the previous numeric result
-                        # without preserving its SQL. In that case, `result`
-                        # is only an alias and is NOT the source metric.
-                        # Recover the metric from the previous user question
-                        # and the actual dataset schema before constructing SQL.
-                        source_column = None
-
-                        try:
-                            schema_columns = [
-                                row[0]
-                                for row in dataset.con.execute(
-                                    """
-                                    SELECT column_name
-                                    FROM information_schema.columns
-                                    WHERE table_name = 'main_table'
-                                    ORDER BY ordinal_position
-                                    """
-                                ).fetchall()
-                            ]
-                        except Exception:
-                            schema_columns = []
-
-                        history_text = " ".join(
-                            str(message.get("text") or message.get("content") or "")
-                            for message in conversation_history
-                            if isinstance(message, dict)
-                            and message.get("role") == "user"
-                        ).lower()
-
-                        # Prefer exact dataset-column matches, including
-                        # readable forms such as `units sold`.
-                        for column in schema_columns:
-                            column_lower = str(column).lower()
-                            readable_column = column_lower.replace("_", " ")
-                            if (
-                                column_lower in history_text
-                                or readable_column in history_text
-                            ):
-                                source_column = column
-                                break
-
-                        # Business-language aliases used by this application.
-                        if source_column is None:
-                            aliases = {
-                                "sales": "revenue",
-                                "sale": "revenue",
-                                "income": "revenue",
-                                "earnings": "revenue",
-                                "units": "units_sold",
-                                "unit": "units_sold",
-                                "price": "unit_price",
-                                "marketing": "marketing_spend",
-                                "marketing spend": "marketing_spend",
-                                "rating": "customer_rating",
-                                "customer rating": "customer_rating",
-                                "returns": "returns",
-                            }
-
-                            for phrase, actual_column in aliases.items():
-                                if phrase in history_text and actual_column in schema_columns:
-                                    source_column = actual_column
-                                    break
-
-                        # Last-resort fallback: only use the returned key if
-                        # it is an actual dataset column, never the SQL alias
-                        # `result`.
-                        if source_column is None and metric_key in schema_columns:
-                            source_column = metric_key
-
-                        if source_column is None:
-                            source_column = metric_key
-
-                        previous_sql = (
-                            f'SELECT SUM("{source_column}") AS result '
-                            f'FROM main_table'
-                        )
-
-                    # If SQL was already preserved, recover the real source
-                    # column from the SQL. If SQL was reconstructed above,
-                    # source_column already contains the inferred metric.
-                    sql_source_column = None
-
-                    # Recover the real source column from SQL.
-                    # Example: SUM("revenue") AS result -> revenue
-                    column_match = re.search(
-                        r'SUM\(\s*"([^"]+)"\s*\)'
-                        r'|AVG\(\s*"([^"]+)"\s*\)'
-                        r'|MAX\(\s*"([^"]+)"\s*\)'
-                        r'|MIN\(\s*"([^"]+)"\s*\)'
-                        r'|COUNT\(\s*"([^"]+)"\s*\)',
-                        previous_sql,
-                        flags=re.IGNORECASE | re.DOTALL,
-                    )
-
-                    if column_match:
-                        sql_source_column = next(
-                            (group for group in column_match.groups() if group),
-                            None,
-                        )
-
-                    # Handle SQL such as SUM(TRY_CAST("revenue" AS DOUBLE)).
-                    if not sql_source_column:
-                        cast_match = re.search(
-                            r'TRY_CAST\(\s*"([^"]+)"\s+AS\s+DOUBLE\s*\)',
-                            previous_sql,
-                            flags=re.IGNORECASE | re.DOTALL,
-                        )
-
-                        if cast_match:
-                            sql_source_column = cast_match.group(1)
-
-
-                    # Never treat a generic SQL alias such as `result` or
-                    # `count` as the actual dataset metric. If the SQL only
-                    # exposes that alias, recover the metric from the user's
-                    # previous question and the dataset schema.
-                    generic_aliases = {
-                        "result",
-                        "count",
-                        "value",
-                        "total",
-                    }
-
-                    if sql_source_column and sql_source_column.lower() not in generic_aliases:
-                        source_column = sql_source_column
-                    else:
-                        try:
-                            schema_columns = [
-                                row[0]
-                                for row in dataset.con.execute(
-                                    """
-                                    SELECT column_name
-                                    FROM information_schema.columns
-                                    WHERE table_name = 'main_table'
-                                    ORDER BY ordinal_position
-                                    """
-                                ).fetchall()
-                            ]
-                        except Exception:
-                            schema_columns = []
-
-                        history_text = " ".join(
-                            str(message.get("text") or message.get("content") or "")
-                            for message in conversation_history
-                            if isinstance(message, dict)
-                            and message.get("role") == "user"
-                        ).lower()
-
-                        inferred_column = None
-
-                        # Exact dataset column names first.
-                        for column in schema_columns:
-                            column_lower = str(column).lower()
-                            readable_column = column_lower.replace("_", " ")
-                            if (
-                                column_lower in history_text
-                                or readable_column in history_text
-                            ):
-                                inferred_column = column
-                                break
-
-                        # Then business-language aliases.
-                        if inferred_column is None:
-                            aliases = {
-                                "sales": "revenue",
-                                "sale": "revenue",
-                                "income": "revenue",
-                                "earnings": "revenue",
-                                "units": "units_sold",
-                                "unit": "units_sold",
-                                "price": "unit_price",
-                                "marketing": "marketing_spend",
-                                "marketing spend": "marketing_spend",
-                                "rating": "customer_rating",
-                                "customer rating": "customer_rating",
-                                "returns": "returns",
-                            }
-
-                            for phrase, actual_column in aliases.items():
-                                if phrase in history_text and actual_column in schema_columns:
-                                    inferred_column = actual_column
-                                    break
-
-                        if inferred_column is not None:
-                            source_column = inferred_column
-
-                    if not source_column or str(source_column).lower() in generic_aliases:
-                        # Last safe fallback: use a real dataset column only.
-                        if metric_key in schema_columns:
-                            source_column = metric_key
-                        elif "revenue" in schema_columns:
-                            source_column = "revenue"
-                        else:
-                            source_column = metric_key
-
-                    readable_metric = source_column.replace(
-                        "_", " "
-                    ).strip()
-
-                    sql_upper = previous_sql.upper()
-
-                    if "SUM(" in sql_upper:
-                        operation = "SUM"
-                    elif "AVG(" in sql_upper:
-                        operation = "AVG"
-                    elif "MAX(" in sql_upper:
-                        operation = "MAX"
-                    elif "MIN(" in sql_upper:
-                        operation = "MIN"
-                    elif "COUNT(" in sql_upper:
-                        operation = "COUNT"
-                    else:
-                        operation = "UNKNOWN"
-
-                    formatted_value = _display_value(metric_value)
-
-                    if operation == "SUM":
-                        try:
-                            row_count = dataset.row_count
-                        except Exception:
-                            row_count = None
-
-                        answer = (
-                            f"The total {readable_metric} is "
-                            f"{formatted_value}. This was calculated "
-                            f"by summing all values in the "
-                            f"'{source_column}' column"
-                        )
-
-                        if row_count:
-                            answer += (
-                                f" across the {row_count:,} records "
-                                f"in your dataset."
-                            )
-                        else:
-                            answer += " in your dataset."
-
-                        answer += (
-                            f" The SQL operation used was "
-                            f"SUM({source_column}), which produced "
-                            f"{formatted_value}."
-                        )
-
-                    elif operation == "AVG":
-                        answer = (
-                            f"The average {readable_metric} is "
-                            f"{formatted_value}. This was calculated "
-                            f"by taking the average of the "
-                            f"'{source_column}' values in your dataset."
-                        )
-
-                    elif operation == "MAX":
-                        answer = (
-                            f"The maximum {readable_metric} is "
-                            f"{formatted_value}. This is the largest "
-                            f"value found in the '{source_column}' column."
-                        )
-
-                    elif operation == "MIN":
-                        answer = (
-                            f"The minimum {readable_metric} is "
-                            f"{formatted_value}. This is the smallest "
-                            f"value found in the '{source_column}' column."
-                        )
-
-                    elif operation == "COUNT":
-                        answer = (
-                            f"The count is {formatted_value}. The system "
-                            f"counted the matching records in your dataset."
-                        )
-
-                    else:
-                        answer = (
-                            f"The previous calculation returned "
-                            f"{formatted_value} for {readable_metric}."
-                        )
-
-                    return {
-                        "question": question,
-                        "type": "contextual_followup",
-                        "answer": answer,
-                        "sql": previous_sql,
-                        "columns": list(row.keys()),
-                        "rows": previous_rows,
-                        "row_count": len(
-                            previous_rows
-                        ),
-                        "model": "local",
-                        "visualization": (
-                            previous_visualization
-                        ),
-                    }
-
-        # ----------------------------------------------------
-        # Grouped result / main insight
-        # ----------------------------------------------------
-
-        if len(previous_rows) > 1:
-
-            first_row = previous_rows[0]
-
-            if isinstance(first_row, dict):
-
-                columns = list(
-                    first_row.keys()
-                )
-
-                numeric_columns = []
-
-                for column in columns:
-
-                    values = [
-                        row.get(column)
-                        for row in previous_rows
-                        if isinstance(row, dict)
-                    ]
-
-                    if any(
-                        isinstance(value, (int, float))
-                        and not isinstance(value, bool)
-                        for value in values
-                    ):
-                        numeric_columns.append(column)
-
-                if numeric_columns:
-
-                    # Prefer business metrics such as revenue/sales/value.
-                    preferred_metrics = [
-                        column
-                        for column in numeric_columns
-                        if any(
-                            keyword in column.lower()
-                            for keyword in [
-                                "revenue",
-                                "sales",
-                                "amount",
-                                "value",
-                                "units",
-                                "total",
-                            ]
-                        )
-                    ]
-
-                    metric = (
-                        preferred_metrics[-1]
-                        if preferred_metrics
-                        else numeric_columns[-1]
-                    )
-
-                    valid_rows = [
-                        row
-                        for row in previous_rows
-                        if isinstance(row, dict)
-                        and isinstance(row.get(metric), (int, float))
-                        and not isinstance(row.get(metric), bool)
-                    ]
-
-                    if valid_rows:
-                        highest = max(
-                            valid_rows,
-                            key=lambda row: float(row.get(metric)),
-                        )
-
-                        highest_value = float(highest.get(metric))
-
-                        category_columns = [
-                            column
-                            for column in columns
-                            if column != metric
-                        ]
-
-                        category_column = (
-                            category_columns[0]
-                            if category_columns
-                            else None
-                        )
-
-                        category_value = (
-                            highest.get(category_column)
-                            if category_column
-                            else None
-                        )
-
-                        total = sum(
-                            float(row.get(metric))
-                            for row in valid_rows
-                        )
-
-                        share_text = ""
-                        if total:
-                            share = (highest_value / total) * 100
-                            share_text = (
-                                f" It represents approximately "
-                                f"{share:.1f}% of the returned total."
-                            )
-
-                        if category_column:
-                            answer = (
-                                f"The main insight is that "
-                                f"{category_value} has the highest "
-                                f"{metric.replace('_', ' ')} at "
-                                f"{highest_value:,.0f}."
-                                f"{share_text}"
-                            )
-                        else:
-                            answer = (
-                                f"The main insight is that the highest "
-                                f"{metric.replace('_', ' ')} is "
-                                f"{highest_value:,.0f}."
-                                f"{share_text}"
-                            )
-
-                        return {
-                            "question": question,
-                            "type": "contextual_followup",
-                            "answer": answer,
-                            "sql": previous_assistant.get("sql"),
-                            "columns": columns,
-                            "rows": previous_rows,
-                            "row_count": len(previous_rows),
-                            "model": "local",
-                            "visualization": previous_visualization,
-                        }
-
-        # ----------------------------------------------------
-        # Fallback explanation using previous answer
-        # ----------------------------------------------------
-
-                        value = row.get(metric)
-
-                        if isinstance(
-                            value,
-                            (int, float),
-                        ) and not isinstance(
-                            value,
-                            bool,
-                        ):
-                            total += float(value)
-                            numeric_count += 1
-
-                    answer = (
-                        f"The previous result contains "
-                        f"{len(previous_rows)} groups. "
-                        f"The '{metric.replace('_', ' ')}' "
-                        f"values are being compared across "
-                        f"those groups."
-                    )
-
-                    if numeric_count:
-                        answer += (
-                            f" Across the returned groups, "
-                            f"their combined {metric.replace('_', ' ')} "
-                            f"is approximately "
-                            f"{total:,.2f}."
-                        )
-
-                    return {
-                        "question": question,
-                        "type": "contextual_followup",
-                        "answer": answer,
-                        "sql": previous_assistant.get(
-                            "sql"
-                        ),
-                        "columns": columns,
-                        "rows": previous_rows,
-                        "row_count": len(
-                            previous_rows
-                        ),
-                        "model": "local",
-                        "visualization": (
-                            previous_visualization
-                        ),
-                    }
-
-        # ----------------------------------------------------
-        # Fallback explanation using previous answer
-        # ----------------------------------------------------
-
-        answer = (
-            "The previous answer was based on your "
-            "dataset analysis. "
-        )
-
-        if previous_text:
-            answer += (
-                f"In particular, I previously found: "
-                f"{previous_text}"
-            )
-
-        return {
-            "question": question,
-            "type": "contextual_followup",
-            "answer": answer,
-            "sql": previous_assistant.get("sql"),
-            "columns": [],
-            "rows": previous_rows,
-            "row_count": len(previous_rows),
-            "model": "local",
-            "visualization": previous_visualization,
-        }
-    
 def analyze_with_llm(
     dataset: Dataset,
     question: str,
     conversation_history: list[dict] | None = None,
 ) -> dict:
     """
-    Main entry point used by FastAPI.
+    Main entry point used by FastAPI / AnalystAgent.
 
-    Pipeline:
-
-        User question
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Query Engine
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Forecast Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Trend Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Statistical Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Business Insight Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Grouped Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local Numeric Analysis
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Gemini SQL Generation
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        DuckDB
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Local answer formatting
-              ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“
-        Visualization
+    The order is intentionally generic:
+      1. contextual follow-up
+      2. simple numeric/local query
+      3. grouped/ranking query
+      4. percentage/share
+      5. anomaly
+      6. statistics
+      7. trend
+      8. generic insight
+      9. Gemini SQL fallback
     """
+    if (
+        not isinstance(question, str)
+        or not question.strip()
+    ):
+        raise ValueError(
+            "Question must be a non-empty string."
+        )
 
-    total_start = time.time()
-
-    print("\n==============================")
-    print("AI ANALYST REQUEST")
-    print("Question:", question)
-    print("==============================")
-
-    # --------------------------------------------------------
-    # Validate question
-    # --------------------------------------------------------
-
-    if not isinstance(question, str):
-        raise ValueError("Question must be a string.")
-
+    started = time.perf_counter()
     question = question.strip()
 
-    if not question:
-        raise ValueError("Question cannot be empty.")
-
-    conversation_history = _normalize_conversation_history(conversation_history)
-
-    print(
-        "Validation:",
-        round(time.time() - total_start, 3),
-        "seconds",
+    history = _normalize_conversation_history(
+        conversation_history
     )
 
-    # --------------------------------------------------------
-    # STEP 0
-    # Handle conversational follow-ups BEFORE any expensive
-    # analysis or Gemini fallback.
-    # --------------------------------------------------------
-
-    print("=== CONTEXTUAL FOLLOW-UP CODE ACTIVE ===")
-
-    contextual_start = time.time()
-
-    contextual_result = _try_contextual_followup(
-        dataset,
-        question,
-        conversation_history,
-    )
-
-    print(
-        "Contextual follow-up:",
-        round(
-            time.time() - contextual_start,
-            3,
-        ),
-        "seconds",
-    )
-
-    if contextual_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
+    engines = [
+        (
+            "contextual_followup",
+            lambda: _try_contextual_followup(
+                dataset,
+                question,
+                history,
             ),
-            "seconds",
-        )
-
-        print(
-            "RESULT: LOCAL CONTEXTUAL FOLLOW-UP"
-        )
-
-        print(
-            "==============================\n"
-        )
-
-        return contextual_result
-
-    # --------------------------------------------------------
-    # STEP 1
-    # Try simple local query engine
-    # --------------------------------------------------------
-
-    local_start = time.time()
-
-    local_result = _try_local_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Local query:",
-        round(time.time() - local_start, 3),
-        "seconds",
-    )
-
-    if local_result is not None:
-
-        print(
-            "TOTAL:",
-            round(time.time() - total_start, 3),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL")
-        print("==============================\n")
-
-        return local_result
-
-    # --------------------------------------------------------
-    # STEP 2
-    # Try local forecast analysis
-    # --------------------------------------------------------
-
-    forecast_start = time.time()
-
-    forecast_result = _try_forecast_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Forecast query:",
-        round(time.time() - forecast_start, 3),
-        "seconds",
-    )
-
-    if forecast_result is not None:
-        print(
-            "TOTAL:",
-            round(time.time() - total_start, 3),
-            "seconds",
-        )
-        print("RESULT: LOCAL FORECAST")
-        print("==============================\\n")
-        return forecast_result
-
-    # --------------------------------------------------------
-    # STEP 3
-    # Try local trend analysis
-    # --------------------------------------------------------
-
-    trend_start = time.time()
-
-    trend_result = _try_trend_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Trend query:",
-        round(time.time() - trend_start, 3),
-        "seconds",
-    )
-
-    if trend_result is not None:
-        print(
-            "TOTAL:",
-            round(time.time() - total_start, 3),
-            "seconds",
-        )
-        print("RESULT: LOCAL TREND")
-        print("==============================\\n")
-        return trend_result
-
-    # --------------------------------------------------------
-    # STEP 4
-    # Try local statistical analysis
-    # --------------------------------------------------------
-
-    statistical_start = time.time()
-
-    statistical_result = _try_statistical_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Statistical query:",
-        round(time.time() - statistical_start, 3),
-        "seconds",
-    )
-
-    if statistical_result is not None:
-        print(
-            "TOTAL:",
-            round(time.time() - total_start, 3),
-            "seconds",
-        )
-        print("RESULT: LOCAL STATISTICAL")
-        print("==============================\\n")
-        return statistical_result
-
-    # --------------------------------------------------------
-    # --------------------------------------------------------
-    # STEP 5
-    # Try dataset-level main insight analysis
-    # --------------------------------------------------------
-
-    main_insight_start = time.time()
-
-    main_insight_result = _try_main_insight_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Main insight:",
-        round(
-            time.time() - main_insight_start,
-            3,
         ),
-        "seconds",
-    )
-
-    if main_insight_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
+        (
+            "local_query",
+            lambda: _try_local_query(
+                dataset,
+                question,
             ),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL MAIN INSIGHT")
-        print("==============================\n")
-
-        return main_insight_result
-
-    # --------------------------------------------------------
-    # STEP 6
-    # Try business insight analysis
-    # --------------------------------------------------------
-    # STEP 5
-    # Try local grouped analysis
-    # --------------------------------------------------------
-
-    grouped_start = time.time()
-
-    grouped_result = _try_grouped_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Grouped query:",
-        round(
-            time.time() - grouped_start,
-            3,
         ),
-        "seconds",
-    )
-
-    if grouped_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
+        (
+            "grouped_analysis",
+            lambda: _try_grouped_query(
+                dataset,
+                question,
             ),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL GROUPED")
-        print("==============================\n")
-
-        return grouped_result
-
-    # --------------------------------------------------------
-    # STEP 6
-    # Try business insight analysis
-    # --------------------------------------------------------
-
-    insight_start = time.time()
-
-    insight_result = _try_business_insight_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Business insight:",
-        round(
-            time.time() - insight_start,
-            3,
         ),
-        "seconds",
-    )
-
-    if insight_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
+        (
+            "percentage_analysis",
+            lambda: _try_percentage_query(
+                dataset,
+                question,
             ),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL BUSINESS INSIGHT")
-        print("==============================\n")
-
-        return insight_result
-
-    # --------------------------------------------------------
-    # STEP 7
-    # Try local numeric analysis
-    # --------------------------------------------------------
-
-    numeric_start = time.time()
-
-    numeric_result = _try_numeric_query(
-        dataset,
-        question,
-    )
-
-    print(
-        "Numeric query:",
-        round(
-            time.time() - numeric_start,
-            3,
         ),
-        "seconds",
-    )
-
-    if numeric_result is not None:
-
-        print(
-            "TOTAL:",
-            round(
-                time.time() - total_start,
-                3,
+        (
+            "anomaly_detection",
+            lambda: _try_anomaly_query(
+                dataset,
+                question,
             ),
-            "seconds",
-        )
-
-        print("RESULT: LOCAL NUMERIC")
-        print("==============================\n")
-
-        return numeric_result
-
-    # --------------------------------------------------------
-    # STEP 8
-    # Gemini generates SQL
-    # --------------------------------------------------------
-
-    print("Falling back to Gemini...")
-
-    gemini_start = time.time()
-
-    sql = _generate_sql(
-        dataset,
-        question,
-        conversation_history,
-    )
-
-    print(
-        "Gemini:",
-        round(
-            time.time() - gemini_start,
-            3,
         ),
-        "seconds",
-    )
-
-    # --------------------------------------------------------
-    # STEP 9
-    # Execute SQL
-    # --------------------------------------------------------
-
-    sql_start = time.time()
-
-    columns, rows = _execute_sql(
-        dataset,
-        sql,
-    )
-
-    print(
-        "DuckDB:",
-        round(
-            time.time() - sql_start,
-            3,
+        (
+            "statistics",
+            lambda: _try_statistical_query(
+                dataset,
+                question,
+            ),
         ),
-        "seconds",
-    )
-
-    # --------------------------------------------------------
-    # STEP 10
-    # Format result locally
-    # --------------------------------------------------------
-
-    answer = _format_answer(
-        question,
-        columns,
-        rows,
-    )
-
-    # --------------------------------------------------------
-    # STEP 11
-    # Select visualization
-    # --------------------------------------------------------
-
-    visualization = _choose_visualization(
-        columns,
-        rows,
-    )
-
-    # --------------------------------------------------------
-    # STEP 12
-    # Return response
-    # --------------------------------------------------------
-
-    total_time = round(
-        time.time() - total_start,
-        3,
-    )
-
-    print(
-        "TOTAL:",
-        total_time,
-        "seconds",
-    )
-
-    print("RESULT: GEMINI")
-    print("==============================\n")
-
-    return {
-        "question": question,
-        "type": "llm_analysis",
-        "answer": answer,
-        "sql": sql,
-        "columns": columns,
-        "rows": _serialize_rows(
-            columns,
-            rows,
+        (
+            "trend",
+            lambda: _try_trend_query(
+                dataset,
+                question,
+            ),
         ),
-        "row_count": len(rows),
-        "model": MODEL,
-        "visualization": visualization,
-    }
-
-
-def _try_statistical_query(dataset, question: str) -> dict | None:
-    """
-    Handle common statistical analysis questions locally
-    without using Gemini.
-    """
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # --------------------------------------------------------
-    # Get schema
-    # --------------------------------------------------------
-
-    try:
-        schema_rows = dataset.con.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'main_table'
-            ORDER BY ordinal_position
-            """
-        ).fetchall()
-    except Exception as exc:
-        print(
-            "Statistical schema lookup failed:",
-            repr(exc),
-        )
-        return None
-
-    schema = {
-        str(row[0]).lower(): str(row[1]).upper()
-        for row in schema_rows
-    }
-
-    numeric_columns = [
-        column
-        for column, data_type in schema.items()
-        if any(
-            dtype in data_type
-            for dtype in [
-                "INT",
-                "DOUBLE",
-                "FLOAT",
-                "DECIMAL",
-                "NUMERIC",
-            ]
-        )
+        (
+            "main_insight",
+            lambda: _try_main_insight_query(
+                dataset,
+                question,
+            ),
+        ),
     ]
 
-    # --------------------------------------------------------
-    # Find requested columns
-    # --------------------------------------------------------
+    errors = []
 
-    selected_columns = []
-
-    for column in numeric_columns:
-        if column in q:
-            selected_columns.append(column)
-
-    # Business aliases
-    aliases = {
-        "sales": "revenue",
-        "sale": "revenue",
-        "income": "revenue",
-        "earnings": "revenue",
-        "marketing": "marketing_spend",
-        "marketing spend": "marketing_spend",
-        "marketing cost": "marketing_spend",
-        "units": "units_sold",
-        "price": "unit_price",
-        "rating": "customer_rating",
-        "returns": "returns",
-    }
-
-    for alias, column in aliases.items():
-        if alias in q and column in schema:
-            if column not in selected_columns:
-                selected_columns.append(column)
-
-    # --------------------------------------------------------
-    # Correlation
-    # --------------------------------------------------------
-
-    # --------------------------------------------------------
-    # Distribution / Histogram
-    # --------------------------------------------------------
-
-    if "distribution" in q:
-
-        if not selected_columns:
-            return None
-
-        column = selected_columns[0]
-
-        distribution_sql = f"""
-        SELECT
-            TRY_CAST("{column}" AS DOUBLE) AS "{column}"
-        FROM main_table
-        WHERE TRY_CAST("{column}" AS DOUBLE) IS NOT NULL
-        ORDER BY "{column}"
-        LIMIT 5000
-        """.strip()
-
+    for name, engine in engines:
         try:
-            distribution_result = dataset.con.execute(
-                distribution_sql
-            )
+            result = engine()
 
-            distribution_columns = [
-                description[0]
-                for description in distribution_result.description
-            ]
+            if result is not None:
+                result["agent"] = {
+                    "name": (
+                        "AI Data Analyst Agent"
+                    ),
+                    "plan": [
+                        {
+                            "tool": name,
+                            "purpose": (
+                                "Generic "
+                                "dataset analysis"
+                            ),
+                            "status": "success",
+                        }
+                    ],
+                    "total_duration_ms": round(
+                        (
+                            time.perf_counter()
+                            - started
+                        )
+                        * 1000,
+                        2,
+                    ),
+                    "fallback_used": False,
+                }
 
-            distribution_rows = distribution_result.fetchall()
+                return result
 
         except Exception as exc:
+            errors.append(
+                (
+                    name,
+                    repr(exc),
+                )
+            )
+
             print(
-                "Distribution query failed:",
+                f"Analyst engine "
+                f"{name} failed:",
                 repr(exc),
             )
-            return None
 
-        if not distribution_rows:
-            return None
-
-        return {
-            "question": question,
-            "type": "statistical_analysis",
-            "answer": (
-                f"Distribution of {column} "
-                f"contains {len(distribution_rows)} numeric values."
-            ),
-            "sql": distribution_sql,
-            "columns": distribution_columns,
-            "rows": _serialize_rows(
-                distribution_columns,
-                distribution_rows,
-            ),
-            "chart_rows": _serialize_rows(
-                distribution_columns,
-                distribution_rows,
-            ),
-            "row_count": len(distribution_rows),
-            "model": "local",
-            "visualization": {
-                "type": "histogram",
-                "x": column,
-                "title": f"Distribution of {column}",
-            },
-        }
-    if "correlation" in q or "correlation between" in q:
-
-        if len(selected_columns) < 2:
-            return None
-
-        col1 = selected_columns[0]
-        col2 = selected_columns[1]
-
-        correlation_sql = f"""
-SELECT
-    CORR(
-        TRY_CAST("{col1}" AS DOUBLE),
-        TRY_CAST("{col2}" AS DOUBLE)
-    ) AS correlation
-FROM main_table
-""".strip()
-
-        result = dataset.con.execute(
-            correlation_sql
-        ).fetchone()
-
-        correlation = result[0] if result else None
-
-        if correlation is None:
-            return None
-
-        # Fetch the actual paired observations so the frontend
-        # scatter chart receives rows containing both x and y values.
-        chart_sql = f"""
-SELECT
-    TRY_CAST("{col1}" AS DOUBLE) AS "{col1}",
-    TRY_CAST("{col2}" AS DOUBLE) AS "{col2}"
-FROM main_table
-WHERE
-    TRY_CAST("{col1}" AS DOUBLE) IS NOT NULL
-    AND TRY_CAST("{col2}" AS DOUBLE) IS NOT NULL
-LIMIT 1000
-""".strip()
-
-        chart_result = dataset.con.execute(
-            chart_sql
-        )
-
-        chart_columns = [
-            description[0]
-            for description in chart_result.description
-        ]
-
-        chart_rows = chart_result.fetchall()
-
-        return {
-            "question": question,
-            "type": "statistical_analysis",
-            "answer": (
-                f"The correlation between {col1} and "
-                f"{col2} is {correlation:.4f}."
-            ),
-            "sql": correlation_sql,
-            "columns": ["correlation"],
-            "rows": [
-                {
-                    "correlation": correlation
-                }
-            ],
-            "chart_rows": _serialize_rows(
-                chart_columns,
-                chart_rows,
-            ),
-            "row_count": 1,
-            "model": "local",
-            "visualization": {
-                "type": "scatter",
-                "x": col1,
-                "y": col2,
-                "title": f"{col1} vs {col2}",
-                "correlation": correlation,
-            },
-        }
-
-    # --------------------------------------------------------
-    # Median
-    # --------------------------------------------------------
-
-    if "median" in q:
-
-        if not selected_columns:
-            return None
-
-        column = selected_columns[0]
-
-        result = dataset.con.execute(
-            f"""
-            SELECT MEDIAN(
-                TRY_CAST("{column}" AS DOUBLE)
-            )
-            FROM main_table
-            """
-        ).fetchone()
-
-        value = result[0] if result else None
-
-        if value is None:
-            return None
-
-        return {
-            "question": question,
-            "type": "statistical_analysis",
-            "answer": (
-                f"The median of {column} is {value:,.2f}."
-            ),
-            "sql": f"""
-SELECT MEDIAN(
-    TRY_CAST("{column}" AS DOUBLE)
-)
-FROM main_table
-""".strip(),
-            "columns": [column],
-            "rows": [
-                {
-                    "median": float(value)
-                }
-            ],
-            "row_count": 1,
-            "model": "local",
-            "visualization": {
-                "type": "table",
-            },
-        }
-
-    # --------------------------------------------------------
-    # Standard deviation
-    # --------------------------------------------------------
-
-    if (
-        "standard deviation" in q
-        or "std deviation" in q
-        or "std dev" in q
-    ):
-
-        if not selected_columns:
-            return None
-
-        column = selected_columns[0]
-
-        result = dataset.con.execute(
-            f"""
-            SELECT STDDEV_SAMP(
-                TRY_CAST("{column}" AS DOUBLE)
-            )
-            FROM main_table
-            """
-        ).fetchone()
-
-        value = result[0] if result else None
-
-        if value is None:
-            return None
-
-        return {
-            "question": question,
-            "type": "statistical_analysis",
-            "answer": (
-                f"The standard deviation of {column} "
-                f"is {value:,.2f}."
-            ),
-            "sql": f"""
-SELECT STDDEV_SAMP(
-    TRY_CAST("{column}" AS DOUBLE)
-)
-FROM main_table
-""".strip(),
-            "columns": [column],
-            "rows": [
-                {
-                    "standard_deviation": float(value)
-                }
-            ],
-            "row_count": 1,
-            "model": "local",
-            "visualization": {
-                "type": "table",
-            },
-        }
-
-    # --------------------------------------------------------
-    # Variance
-    # --------------------------------------------------------
-
-    if "variance" in q:
-
-        if not selected_columns:
-            return None
-
-        column = selected_columns[0]
-
-        result = dataset.con.execute(
-            f"""
-            SELECT VAR_SAMP(
-                TRY_CAST("{column}" AS DOUBLE)
-            )
-            FROM main_table
-            """
-        ).fetchone()
-
-        value = result[0] if result else None
-
-        if value is None:
-            return None
-
-        return {
-            "question": question,
-            "type": "statistical_analysis",
-            "answer": (
-                f"The variance of {column} "
-                f"is {value:,.2f}."
-            ),
-            "sql": f"""
-SELECT VAR_SAMP(
-    TRY_CAST("{column}" AS DOUBLE)
-)
-FROM main_table
-""".strip(),
-            "columns": [column],
-            "rows": [
-                {
-                    "variance": float(value)
-                }
-            ],
-            "row_count": 1,
-            "model": "local",
-            "visualization": {
-                "type": "table",
-            },
-        }
-
-    return None
-
-def _try_forecast_query(dataset, question):
-    """
-    Handle simple time-series forecasting locally.
-
-    Examples:
-        Forecast revenue for the next 7 days
-        Predict sales for the next 10 days
-        Forecast revenue next 5 days
-    """
-
-    import re
-    from datetime import timedelta
-
-    q = question.lower().strip()
-
-    print("BUSINESS QUERY:", question)
-    print("BUSINESS NORMALIZED:", q)
-
-    # ----------------------------------------------------------
-    # Detect forecast question
-    # ----------------------------------------------------------
-
-    forecast_keywords = [
-        "forecast",
-        "predict",
-        "prediction",
-        "future revenue",
-        "future sales",
-        "next",
-    ]
-
-    if not any(
-        keyword in q
-        for keyword in forecast_keywords
-    ):
-        return None
-
-    # ----------------------------------------------------------
-    # Detect forecast horizon
-    # ----------------------------------------------------------
-
-    horizon = 7
-
-    horizon_match = re.search(
-        r"next\s+(\d+)\s*(day|days|week|weeks|month|months)",
-        q,
+    # Final generic SQL fallback.
+    result = _gemini_result(
+        dataset,
+        question,
+        history,
     )
 
-    if horizon_match:
-
-        number = int(
-            horizon_match.group(1)
-        )
-
-        unit = horizon_match.group(2)
-
-        if "week" in unit:
-            horizon = number * 7
-
-        elif "month" in unit:
-            horizon = number * 30
-
-        else:
-            horizon = number
-
-    # Keep forecast reasonable
-    horizon = max(
-        1,
-        min(horizon, 90)
-    )
-
-    # ----------------------------------------------------------
-    # Get schema
-    # ----------------------------------------------------------
-
-    schema_rows = dataset.con.execute(
-        """
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_name = 'main_table'
-        ORDER BY ordinal_position
-        """
-    ).fetchall()
-
-    if not schema_rows:
-        return None
-
-    columns = [
-        row[0]
-        for row in schema_rows
-    ]
-
-    # ----------------------------------------------------------
-    # Find date column
-    # ----------------------------------------------------------
-
-    date_column = None
-
-    for column_name, data_type in schema_rows:
-
-        data_type_upper = str(
-            data_type
-        ).upper()
-
-        if (
-            "DATE" in data_type_upper
-            or "TIMESTAMP" in data_type_upper
-            or "DATETIME" in data_type_upper
-        ):
-            date_column = column_name
-            break
-
-    # ----------------------------------------------------------
-    # Fallback date column names
-    # ----------------------------------------------------------
-
-    if date_column is None:
-
-        date_candidates = [
-            "date",
-            "datetime",
-            "timestamp",
-            "time",
-            "day",
-        ]
-
-        for candidate in date_candidates:
-
-            for column in columns:
-
-                if column.lower() == candidate:
-                    date_column = column
-                    break
-
-            if date_column:
-                break
-
-    if date_column is None:
-        return None
-
-    # ----------------------------------------------------------
-    # Find metric column
-    # ----------------------------------------------------------
-
-    metric_column = None
-
-    metric_aliases = {
-        "revenue": [
-            "revenue",
-            "sales",
-            "sale",
-            "income",
-            "earnings",
-        ],
-        "units_sold": [
-            "units_sold",
-            "units",
-            "quantity",
-            "qty",
-        ],
-        "unit_price": [
-            "unit_price",
-            "price",
-        ],
-        "marketing_spend": [
-            "marketing_spend",
-            "marketing",
-            "marketing_cost",
-        ],
-    }
-
-    for metric_name, aliases in metric_aliases.items():
-
-        for column in columns:
-
-            column_lower = column.lower()
-
-            if column_lower in aliases:
-
-                if (
-                    metric_name in q
-                    or any(
-                        alias in q
-                        for alias in aliases
-                    )
-                ):
-                    metric_column = column
-                    break
-
-        if metric_column:
-            break
-
-    # ----------------------------------------------------------
-    # Default to revenue
-    # ----------------------------------------------------------
-
-    if metric_column is None:
-
-        for column in columns:
-
-            if column.lower() == "revenue":
-                metric_column = column
-                break
-
-    if metric_column is None:
-        return None
-
-    # ----------------------------------------------------------
-    # Escape identifiers
-    # ----------------------------------------------------------
-
-    safe_date = date_column.replace(
-        '"',
-        '""'
-    )
-
-    safe_metric = metric_column.replace(
-        '"',
-        '""'
-    )
-
-    # ----------------------------------------------------------
-    # Get historical data
-    # ----------------------------------------------------------
-
-    sql = f"""
-        SELECT
-            TRY_CAST(
-                "{safe_date}" AS DATE
-            ) AS "{safe_date}",
-
-            SUM(
-                TRY_CAST(
-                    "{safe_metric}" AS DOUBLE
+    if result is not None:
+        result["agent"] = {
+            "name": (
+                "AI Data Analyst Agent"
+            ),
+            "plan": [
+                {
+                    "tool": "gemini_sql",
+                    "purpose": (
+                        "Generic SQL fallback"
+                    ),
+                    "status": "success",
+                }
+            ],
+            "total_duration_ms": round(
+                (
+                    time.perf_counter()
+                    - started
                 )
-            ) AS "{safe_metric}"
-
-        FROM main_table
-
-        WHERE TRY_CAST(
-            "{safe_date}" AS DATE
-        ) IS NOT NULL
-
-        GROUP BY
-            TRY_CAST(
-                "{safe_date}" AS DATE
-            )
-
-        ORDER BY
-            TRY_CAST(
-                "{safe_date}" AS DATE
-            )
-    """
-
-    try:
-
-        result_rows = dataset.con.execute(
-            sql
-        ).fetchall()
-
-    except Exception as error:
-
-        print(
-            "Forecast query error:",
-            repr(error)
-        )
-
-        return None
-
-    if len(result_rows) < 3:
-        return None
-
-    # ----------------------------------------------------------
-    # Prepare historical data
-    # ----------------------------------------------------------
-
-    historical = []
-
-    for date_value, metric_value in result_rows:
-
-        if date_value is None:
-            continue
-
-        if metric_value is None:
-            continue
-
-        historical.append(
-            {
-                "date": date_value,
-                "value": float(metric_value),
-            }
-        )
-
-    if len(historical) < 3:
-        return None
-
-    # ----------------------------------------------------------
-    # Linear regression
-    #
-    # y = slope*x + intercept
-    # ----------------------------------------------------------
-
-    x_values = list(
-        range(len(historical))
-    )
-
-    y_values = [
-        item["value"]
-        for item in historical
-    ]
-
-    n = len(x_values)
-
-    mean_x = sum(x_values) / n
-    mean_y = sum(y_values) / n
-
-    numerator = sum(
-        (
-            x - mean_x
-        ) * (
-            y - mean_y
-        )
-        for x, y in zip(
-            x_values,
-            y_values
-        )
-    )
-
-    denominator = sum(
-        (
-            x - mean_x
-        ) ** 2
-        for x in x_values
-    )
-
-    if denominator == 0:
-        return None
-
-    slope = (
-        numerator /
-        denominator
-    )
-
-    intercept = (
-        mean_y -
-        slope * mean_x
-    )
-
-    # ----------------------------------------------------------
-    # Build chart data
-    # ----------------------------------------------------------
-
-    rows = []
-
-    for index, item in enumerate(
-        historical
-    ):
-
-        date_value = item["date"]
-
-        if hasattr(
-            date_value,
-            "isoformat"
-        ):
-            date_value = (
-                date_value.isoformat()
-            )
-
-        rows.append(
-            {
-                "date": date_value,
-                "revenue": item["value"],
-                "forecast": None,
-                "type": "historical",
-            }
-        )
-
-    # ----------------------------------------------------------
-    # Generate future forecast
-    # ----------------------------------------------------------
-
-    last_date = historical[-1]["date"]
-
-    if not hasattr(
-        last_date,
-        "year"
-    ):
-        return None
-
-    forecast_values = []
-
-    for step in range(
-        1,
-        horizon + 1
-    ):
-
-        x = len(historical) + step - 1
-
-        predicted_value = (
-            slope * x +
-            intercept
-        )
-
-        # Don't allow negative forecasts
-        predicted_value = max(
-            0,
-            predicted_value
-        )
-
-        future_date = (
-            last_date +
-            timedelta(days=step)
-        )
-
-        rows.append(
-            {
-                "date": future_date.isoformat(),
-                "revenue": None,
-                "forecast": round(
-                    predicted_value,
-                    2
-                ),
-                "type": "forecast",
-            }
-        )
-
-        forecast_values.append(
-            predicted_value
-        )
-
-    # ----------------------------------------------------------
-    # Determine forecast direction
-    # ----------------------------------------------------------
-
-    first_forecast = (
-        forecast_values[0]
-    )
-
-    last_forecast = (
-        forecast_values[-1]
-    )
-
-    if first_forecast == 0:
-
-        forecast_change = 0
-
-    else:
-
-        forecast_change = (
-            (
-                last_forecast -
-                first_forecast
-            )
-            / abs(first_forecast)
-        ) * 100
-
-    if forecast_change > 0:
-        direction = "increase"
-
-    elif forecast_change < 0:
-        direction = "decrease"
-
-    else:
-        direction = "remain relatively stable"
-
-    # ----------------------------------------------------------
-    # Natural-language answer
-    # ----------------------------------------------------------
-
-    answer = (
-        f"The forecast for the next "
-        f"{horizon} days indicates that "
-        f"{metric_column.replace('_', ' ')} "
-        f"is expected to {direction}. "
-        f"The forecast starts at approximately "
-        f"{first_forecast:,.0f} and reaches "
-        f"approximately "
-        f"{last_forecast:,.0f}."
-    )
-
-    # ----------------------------------------------------------
-    # Visualization
-    # ----------------------------------------------------------
-
-    visualization = {
-        "type": "forecast",
-        "x": "date",
-        "y": "revenue",
-        "forecastY": "forecast",
-        "title": (
-            f"{metric_column.replace('_', ' ').title()} "
-            f"Forecast"
-        ),
-    }
-
-    return {
-        "question": question,
-        "type": "forecast",
-        "answer": answer,
-        "sql": sql,
-        "columns": [
-            "date",
-            "revenue",
-            "forecast",
-        ],
-        "rows": rows,
-        "row_count": len(rows),
-        "model": "local",
-        "visualization": visualization,
-        "forecast_horizon": horizon,
-    }
-
-def _try_anomaly_query(dataset, question):
-    """
-    Detect unusual/outlier values in a numeric column using z-score.
-
-    A z-score >= 2 is used as a screening threshold.
-    This identifies potentially unusual values; it does not prove
-    that the data point is an error or fraud.
-    """
-
-    if dataset is None or getattr(dataset, "con", None) is None:
-        return None
-
-    con = dataset.con
-
-    try:
-        # --------------------------------------------------------
-        # Get numeric columns
-        # --------------------------------------------------------
-
-        columns_result = con.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'main_table'
-            """
-        ).fetchall()
-
-        numeric_types = {
-            "INTEGER",
-            "BIGINT",
-            "DOUBLE",
-            "FLOAT",
-            "DECIMAL",
-            "HUGEINT",
-            "SMALLINT",
-            "TINYINT",
-            "REAL",
+                * 1000,
+                2,
+            ),
+            "fallback_used": True,
         }
 
-        numeric_columns = []
+        return result
 
-        for column_name, data_type in columns_result:
-            data_type_upper = str(data_type).upper()
+    details = "; ".join(
+        f"{name}: {error}"
+        for name, error in errors[-5:]
+    )
 
-            if any(
-                numeric_type in data_type_upper
-                for numeric_type in numeric_types
-            ):
-                numeric_columns.append(column_name)
+    raise RuntimeError(
+        "Unable to answer the question "
+        "with the available analysis engines. "
+        + details
+    )
 
-        if not numeric_columns:
-            return None
 
-        # --------------------------------------------------------
-        # Detect which column the user is asking about
-        # --------------------------------------------------------
+# Some older callers use this alias.
+analyze = analyze_with_llm
 
-        q = question.lower()
 
-        aliases = {
-            "sales": "revenue",
-            "sale": "revenue",
-            "income": "revenue",
-            "earnings": "revenue",
-            "units": "units_sold",
-            "price": "unit_price",
-            "marketing": "marketing_spend",
-            "rating": "customer_rating",
-            "returns": "returns",
-        }
 
-        selected_column = None
 
-        # First look for an exact column name
-        for column in numeric_columns:
-            if column.lower() in q:
-                selected_column = column
-                break
 
-        # Then check aliases
-        if selected_column is None:
-            for keyword, column in aliases.items():
-                if keyword in q and column in numeric_columns:
-                    selected_column = column
-                    break
 
-        # Default to revenue if available
-        if selected_column is None:
-            if "revenue" in numeric_columns:
-                selected_column = "revenue"
-            else:
-                selected_column = numeric_columns[0]
-
-        # --------------------------------------------------------
-        # Run anomaly detection
-        # --------------------------------------------------------
-
-        query = f"""
-        WITH scored AS (
-            SELECT
-                ROW_NUMBER() OVER () AS row_number,
-                TRY_CAST("{selected_column}" AS DOUBLE) AS value,
-                AVG(
-                    TRY_CAST("{selected_column}" AS DOUBLE)
-                ) OVER () AS mean_value,
-                STDDEV_SAMP(
-                    TRY_CAST("{selected_column}" AS DOUBLE)
-                ) OVER () AS stddev_value
-            FROM main_table
-            WHERE TRY_CAST(
-                "{selected_column}" AS DOUBLE
-            ) IS NOT NULL
-        ),
-
-        anomaly_scores AS (
-            SELECT
-                row_number,
-                value,
-                mean_value,
-                stddev_value,
-                ABS(
-                    (value - mean_value)
-                    / NULLIF(stddev_value, 0)
-                ) AS z_score
-            FROM scored
-        )
-
-        SELECT
-            row_number,
-            value,
-            mean_value,
-            stddev_value,
-            z_score
-        FROM anomaly_scores
-        WHERE z_score >= 2
-        ORDER BY z_score DESC
-        LIMIT 10
-        """
-
-        result = con.execute(query)
-        rows_data = result.fetchall()
-
-        columns = [
-            description[0]
-            for description in result.description
-        ]
-
-        # --------------------------------------------------------
-        # No anomalies
-        # --------------------------------------------------------
-
-        if not rows_data:
-            return {
-                "status": "success",
-                "type": "anomaly_detection",
-                "answer": (
-                    f"No unusual {selected_column} values were "
-                    "detected using the z-score screening threshold "
-                    "of 2."
-                ),
-                "sql": query,
-                "columns": columns,
-                "rows": [],
-                "row_count": 0,
-                "model": "local",
-                "visualization": None,
-            }
-
-        # --------------------------------------------------------
-        # Convert rows to dictionaries
-        # --------------------------------------------------------
-
-        rows = [
-            dict(zip(columns, row))
-            for row in rows_data
-        ]
-
-        anomaly_count = len(rows)
-
-        # Highest anomaly
-        highest_anomaly = rows[0]
-
-        answer = (
-            f"Found {anomaly_count} potentially unusual "
-            f"{selected_column} value(s) using a z-score "
-            f"threshold of 2. "
-            f"The most unusual value is "
-            f"{highest_anomaly['value']:,.2f} "
-            f"with a z-score of "
-            f"{highest_anomaly['z_score']:.2f}. "
-            f"These are statistical outliers and should be "
-            f"investigated further rather than automatically "
-            f"treated as errors."
-        )
-
-        return {
-            "status": "success",
-            "type": "anomaly_detection",
-            "answer": answer,
-            "sql": query,
-            
-            "columns": columns,
-            "rows": rows,
-            "row_count": anomaly_count,
-            "model": "local",
-            "visualization": {
-                "type": "bar",
-                "x": "row_number",
-                "y": "value",
-                "title": (
-                    f"Potential anomalies in "
-                    f"{selected_column}"
-                ),
-            },
-        }
-
-    except Exception as e:
-        print(
-            "Anomaly detection error:",
-            repr(e)
-        )
-
-        return None
