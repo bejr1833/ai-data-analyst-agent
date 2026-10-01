@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+﻿const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 
 
 /* ============================================================
@@ -292,7 +292,8 @@ export function reportUrl(
   datasetId
 ) {
 
-  return `${BASE}/datasets/${datasetId}/report.pdf`;
+  return `${BASE}/datasets/${datasetId}/report.pdf?v=${Date.now()}`;
 }
+
 
 

@@ -448,7 +448,10 @@ def download_report(
             "Content-Disposition": (
                 f'attachment; '
                 f'filename="{dataset.filename}_report.pdf"'
-            )
+            ),
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
         }
     )
 
