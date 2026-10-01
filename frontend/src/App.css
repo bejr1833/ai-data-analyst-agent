@@ -12428,7 +12428,7 @@ body .app-shell header.app-header .btn-secondary {
 
   body .app-shell .metrics-title {
     margin: 0 !important;
-    font-size: 25px !important;
+    font-size: 22px !important;
     line-height: 1.1 !important;
   }
 
@@ -12444,8 +12444,8 @@ body .app-shell header.app-header .btn-secondary {
 
     display: grid !important;
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    grid-auto-rows: 76px !important;
-    grid-template-rows: repeat(4, 76px) !important;
+    grid-auto-rows: 64px !important;
+    grid-template-rows: repeat(4, 64px) !important;
 
     min-height: 0 !important;
     height: auto !important;
@@ -12464,10 +12464,10 @@ body .app-shell header.app-header .btn-secondary {
   body .app-shell .metrics-grid .metric-cell {
     min-width: 0 !important;
     min-height: 0 !important;
-    height: 76px !important;
-    max-height: 76px !important;
+    height: 64px !important;
+    max-height: 64px !important;
 
-    padding: 7px 9px !important;
+    padding: 6px 8px !important;
 
     box-sizing: border-box !important;
 
