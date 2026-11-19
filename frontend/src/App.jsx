@@ -11,6 +11,7 @@ import AIAnalyst from "./components/AIAnalyst.jsx";
 import DataStory from "./components/DataStory.jsx";
 
 import "./App.css";
+import "./PremiumWorkspace.css";
 
 import {
   uploadDataset,
