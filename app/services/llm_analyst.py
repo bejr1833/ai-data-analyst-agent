@@ -850,40 +850,54 @@ def _detect_metric_column(
     numeric: list[str],
     exclude: str | None = None,
 ) -> str | None:
-    mentioned = _find_mentioned_columns(
-        question,
-        columns,
-    )
+    q = _norm(question)
+    mentioned = _find_mentioned_columns(question, columns)
 
+    # An explicit dataset column name always wins over a synonym.
     for column in mentioned:
-        if (
-            column != exclude
-            and column in numeric
-        ):
+        if column != exclude and column in numeric:
             return column
+
+    # Resolve common business language to a real numeric field only
+    # when the dataset contains exactly one unambiguous candidate.
+    semantic_aliases = {
+        "revenue": {"revenue", "sales", "turnover", "income", "gross sales"},
+        "cost": {"cost", "spend", "expense", "expenses", "marketing spend", "marketing cost", "budget"},
+        "leads": {"lead", "leads"},
+        "conversions": {"conversion", "conversions", "orders", "closed deals"},
+        "quantity": {"quantity", "units", "units sold"},
+    }
+
+    for aliases in semantic_aliases.values():
+        if not any(
+            re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", q)
+            for alias in aliases
+        ):
+            continue
+
+        candidates = [
+            column
+            for column in numeric
+            if _norm(column) in aliases
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
 
     # Safe fallback only when there is exactly one numeric column.
     if len(numeric) == 1 and any(
-        marker in _norm(question)
+        re.search(
+            r"(?<!\w)" + re.escape(marker) + r"(?!\w)",
+            q,
+        )
         for marker in (
-            "average",
-            "avg",
-            "mean",
-            "sum",
-            "total",
-            "highest",
-            "lowest",
-            "maximum",
-            "minimum",
-            "median",
-            "top",
-            "bottom",
+            "average", "avg", "mean", "sum", "total",
+            "highest", "lowest", "maximum", "minimum",
+            "median", "top", "bottom",
         )
     ):
         return numeric[0]
 
     return None
-
 
 def _try_comparison_query(
     dataset: Dataset,
@@ -1237,9 +1251,9 @@ def _try_local_query(
                             normalized_name = _norm(name)
 
                             match = re.search(
-                                r"(?<!\\w)"
+                                r"(?<!\w)"
                                 + re.escape(normalized_name)
-                                + r"(?!\\w)",
+                                + r"(?!\w)",
                                 q,
                                 re.IGNORECASE,
                             )
@@ -1677,6 +1691,35 @@ def _try_local_query(
             columns,
             numeric,
         )
+
+        # Explain invalid numeric operations on categorical fields instead
+        # of falling through to a generic SQL/LLM fallback.
+        if (
+            aggregation in ("AVG", "SUM", "MIN", "MAX", "MEDIAN")
+            and metric is None
+        ):
+            mentioned = _find_mentioned_columns(q, columns)
+            categorical = [
+                column for column in mentioned
+                if column not in numeric
+            ]
+            if categorical:
+                requested = ", ".join(_readable(column) for column in categorical)
+                answer = (
+                    f"{requested} is categorical text, so it cannot be "
+                    "averaged or summed. Try counting records by that field, "
+                    "or choose a numeric metric such as revenue, leads, "
+                    "conversions, or cost."
+                )
+                return _base_result(
+                    question,
+                    "schema_validation",
+                    answer,
+                    "",
+                    [],
+                    [],
+                    {"type": "table", "title": "Choose a numeric metric"},
+                )
 
         if aggregation == "COUNT":
             target = (

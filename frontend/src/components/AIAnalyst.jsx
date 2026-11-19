@@ -13,146 +13,106 @@ function normalizeColumnName(value) {
 }
 
 function buildSuggestionGroups(columns = []) {
-  const names = Array.isArray(columns)
-      ? columns
-          .map((column) =>
-            typeof column === "string"
-              ? column
-              : column?.column || column?.name || column?.column_name || ""
-          )
-          .filter(Boolean)
-      : [];
+  const profiles = Array.isArray(columns)
+    ? columns.map((item) =>
+        typeof item === "string"
+          ? { column: item, type: "unknown", dtype: "" }
+          : {
+              column: item?.column || item?.name || item?.column_name || "",
+              type: item?.type || "unknown",
+              dtype: item?.dtype || "",
+            }
+      ).filter((item) => item.column)
+    : [];
 
-  const normalized = names.map(normalizeColumnName);
+  const normalize = (value) => normalizeColumnName(value);
+  const numeric = profiles.filter((item) => item.type === "numeric");
+  const categorical = profiles.filter((item) => item.type === "categorical");
 
-  const firstMatch = (...terms) => {
-    const index = normalized.findIndex((name) =>
-      terms.some((term) => name.includes(term))
-    );
+  // Resolve semantic fields only within the appropriate data type.
+  // This prevents names such as "salesperson" from being treated as sales metrics.
+  const findNumeric = (pattern) => numeric.find((item) => pattern.test(normalize(item.column)));
+  const findCategory = (pattern) => categorical.find((item) => pattern.test(normalize(item.column)));
+  const findDate = () => profiles.find((item) =>
+    /date|time|timestamp/i.test(item.dtype) ||
+    /(^| )(date|datetime|timestamp|month|year)( |$)/.test(normalize(item.column))
+  );
 
-    return index >= 0 ? names[index] : null;
-  };
-
+  const revenue = findNumeric(/(^| )(revenue|sales|turnover|income|amount)( |$)/);
+  const cost = findNumeric(/(^| )(cost|spend|expense|expenses|marketing cost|marketing spend)( |$)/);
+  const leads = findNumeric(/(^| )(lead|leads)( |$)/);
+  const conversions = findNumeric(/(^| )(conversion|conversions|orders|orders count)( |$)/);
+  const primaryMetric = revenue || findNumeric(/(^| )(profit|score|marks|percentage|value|quantity|units)( |$)/) || numeric[0];
+  const dateColumn = findDate();
+  const dimensions = categorical.filter((item) => item !== dateColumn).slice(0, 4);
   const groups = [];
 
-  const metricColumn =
-    firstMatch(
-      "total marks",
-      "percentage",
-      "revenue",
-      "sales",
-      "amount",
-      "profit",
-      "income",
-      "score",
-      "marks",
-      "value"
-    ) ||
-    firstMatch("percent");
-
-  const categoryColumn = firstMatch(
-    "department",
-    "region",
-    "category",
-    "segment",
-    "product",
-    "gender",
-    "class",
-    "grade",
-    "type"
-  );
-
-  const dateColumn = firstMatch(
-    "date",
-    "time",
-    "month"
-  );
-
-  const attendanceColumn = firstMatch("attendance");
-
-  const studyColumn = firstMatch(
-    "study hours",
-    "study",
-    "hours"
-  );
-
-  const subjectColumn = firstMatch(
-    "mathematics",
-    "math",
-    "physics",
-    "chemistry",
-    "programming",
-    "data science",
-    "dbms",
-    "computer networks"
-  );
-
-  if (metricColumn) {
+  if (primaryMetric) {
     groups.push({
       label: "Key Metrics",
       questions: [
-        `What is the average ${metricColumn}?`,
-        `What is the highest ${metricColumn}?`,
+        `What is the total ${primaryMetric.column}?`,
+        `What is the average ${primaryMetric.column}?`,
+        `What are the minimum and maximum ${primaryMetric.column} values?`,
       ],
     });
   }
 
-  if (categoryColumn && metricColumn) {
+  if (revenue && cost) {
+    const questions = [
+      "Calculate total profit.",
+      "Calculate ROI as a percentage.",
+      "What is the profit margin?",
+    ];
+    if (leads) questions.push("What is the cost per lead?");
+    if (leads && conversions) questions.push("What is the overall conversion rate?");
+    groups.push({ label: "Business KPIs", questions });
+  } else if (leads && conversions) {
     groups.push({
-      label: "Comparisons",
+      label: "Funnel Performance",
       questions: [
-        `Compare ${metricColumn} across ${categoryColumn}.`,
-        `Which ${categoryColumn} has the highest average ${metricColumn}?`,
+        "What is the overall conversion rate?",
+        `Compare total ${conversions.column} with total ${leads.column}.`,
       ],
     });
   }
 
-  if (dateColumn && metricColumn) {
+  if (primaryMetric && dimensions.length) {
     groups.push({
-      label: "Trends",
+      label: "Performance Comparisons",
+      questions: dimensions.slice(0, 3).flatMap((dimension) => [
+        `Which ${dimension.column} has the highest total ${primaryMetric.column}?`,
+        `Show ${primaryMetric.column} by ${dimension.column}.`,
+      ]),
+    });
+  }
+
+  if (dateColumn && primaryMetric) {
+    groups.push({
+      label: "Time Trends",
       questions: [
-        `Show ${metricColumn} over time.`,
-        `Explain the trend in ${metricColumn}.`,
+        `Show ${primaryMetric.column} over time by month.`,
+        `Show the daily trend in ${primaryMetric.column}.`,
       ],
     });
   }
 
-  if (attendanceColumn && metricColumn) {
+  if (numeric.length >= 2) {
     groups.push({
       label: "Relationships",
       questions: [
-        `Show the relationship between ${attendanceColumn} and ${metricColumn}.`,
-        `Is ${attendanceColumn} correlated with ${metricColumn}?`,
+        `Is ${numeric[0].column} correlated with ${numeric[1].column}?`,
+        "Show the correlation matrix for numeric columns.",
       ],
     });
   }
 
-  if (studyColumn && metricColumn) {
+  if (dimensions.length) {
     groups.push({
-      label: "Study Analysis",
+      label: "Data Breakdown",
       questions: [
-        `Show the relationship between ${studyColumn} and ${metricColumn}.`,
-        `Is ${studyColumn} related to ${metricColumn}?`,
-      ],
-    });
-  }
-
-  if (subjectColumn) {
-    groups.push({
-      label: "Subject Performance",
-      questions: [
-        `What is the average ${subjectColumn}?`,
-        `Show the distribution of ${subjectColumn}.`,
-      ],
-    });
-  }
-
-  if (categoryColumn) {
-    groups.push({
-      label: "Distribution",
-      questions: [
-        `Show the distribution of ${categoryColumn}.`,
-        `Which ${categoryColumn} has the most records?`,
+        `Show the distribution of ${dimensions[0].column}.`,
+        `Which ${dimensions[0].column} has the most records?`,
       ],
     });
   }
@@ -161,12 +121,13 @@ function buildSuggestionGroups(columns = []) {
     label: "Data Quality",
     questions: [
       "Show me the data quality summary.",
+      "Which columns have missing values?",
+      "Show the number of unique values in each column.",
     ],
   });
 
-  return groups.slice(0, 6);
+  return groups.filter((group) => group.questions.length).slice(0, 7);
 }
-
 function extractRows(result) {
   if (Array.isArray(result?.rows)) return result.rows;
   if (Array.isArray(result?.data?.rows)) return result.data.rows;
