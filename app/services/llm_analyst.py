@@ -3629,6 +3629,10 @@ def _try_main_insight_query(
     returns = actual("returns", "returned units", "return units")
     rating = actual("customer_rating", "customer rating", "rating")
     region = actual("region", "territory", "area")
+    team = actual("team")
+    campaign = actual("campaign", "campaign name")
+    leads = actual("leads", "lead")
+    conversions = actual("conversions", "conversion")
     product = actual("product", "product name", "item")
     channel = actual("channel", "sales channel")
 
@@ -3644,6 +3648,8 @@ def _try_main_insight_query(
         "total_cost": cost,
         "total_units_sold": units,
         "total_returns": returns,
+        "total_leads": leads,
+        "total_conversions": conversions,
     }
     for alias, column in fields.items():
         if column:
@@ -3669,7 +3675,13 @@ def _try_main_insight_query(
     total_cost = _safe_float(summary.get("total_cost"))
     total_units = _safe_float(summary.get("total_units_sold"))
     total_returns = _safe_float(summary.get("total_returns"))
+    total_leads = _safe_float(summary.get("total_leads"))
+    total_conversions = _safe_float(summary.get("total_conversions"))
     average_rating = _safe_float(summary.get("average_customer_rating"))
+
+    # Legacy funnel datasets may have revenue and cost but no stored profit.
+    if total_profit is None and total_revenue is not None and total_cost is not None:
+        total_profit = total_revenue - total_cost
 
     # Weighted margin: ratio of aggregate profit to aggregate net revenue.
     margin_base = total_net_revenue or total_revenue
@@ -3688,6 +3700,16 @@ def _try_main_insight_query(
         if total_profit is not None and total_marketing_spend
         else None
     )
+    roi = (
+        total_profit * 100.0 / total_cost
+        if total_profit is not None and total_cost
+        else None
+    )
+    conversion_rate = (
+        total_conversions * 100.0 / total_leads
+        if total_conversions is not None and total_leads
+        else None
+    )
 
     findings = [
         f"The dataset contains {record_count:,} transaction records."
@@ -3698,6 +3720,13 @@ def _try_main_insight_query(
         findings.append(f"Net revenue after returns/adjustments totals {total_net_revenue:,.2f}.")
     if total_profit is not None:
         findings.append(f"Recorded profit totals {total_profit:,.2f}.")
+    if roi is not None:
+        findings.append(f"Profit-based ROI against recorded cost is {roi:.2f}%.")
+    if conversion_rate is not None:
+        findings.append(
+            f"Overall conversion rate is {conversion_rate:.2f}% "
+            f"({total_conversions:,.0f} conversions from {total_leads:,.0f} leads)."
+        )
     if profit_margin is not None:
         findings.append(f"Weighted profit margin is {profit_margin:.2f}%.")
     if total_marketing_spend is not None:
@@ -3720,6 +3749,10 @@ def _try_main_insight_query(
         **({"total_revenue": total_revenue} if total_revenue is not None else {}),
         **({"total_net_revenue": total_net_revenue} if total_net_revenue is not None else {}),
         **({"total_profit": total_profit} if total_profit is not None else {}),
+        **({"roi_percent": roi} if roi is not None else {}),
+        **({"total_leads": total_leads} if total_leads is not None else {}),
+        **({"total_conversions": total_conversions} if total_conversions is not None else {}),
+        **({"conversion_rate_percent": conversion_rate} if conversion_rate is not None else {}),
         **({"profit_margin_percent": profit_margin} if profit_margin is not None else {}),
         **({"total_marketing_spend": total_marketing_spend} if total_marketing_spend is not None else {}),
         **({"profit_to_marketing_spend_ratio": profit_to_marketing} if profit_to_marketing is not None else {}),
@@ -3729,9 +3762,10 @@ def _try_main_insight_query(
 
     # Identify the leading categories using sums, not row-level averages.
     for dimension, label in (
-        (region, "region"),
+        (region or team, "region" if region else "team"),
         (product, "product"),
         (channel, "channel"),
+        (campaign, "campaign"),
     ):
         metric_column = revenue or net_revenue or profit
         if not dimension or not metric_column:
@@ -3752,6 +3786,28 @@ def _try_main_insight_query(
                 f"Leading {label} by { _readable(metric_column) } is "
                 f"{leader.get('label')} at "
                 f"{(_safe_float(leader.get('metric_value')) or 0.0):,.2f}."
+            )
+
+    # For the campaign/leads demo schema, identify the campaign with the
+    # strongest profit-based ROI without applying that formula to marketing
+    # spend datasets where cost attribution is not defined.
+    if campaign and revenue and cost:
+        roi_sql = f"""
+            SELECT {_q(campaign)} AS label,
+                   (SUM(TRY_CAST({_q(revenue)} AS DOUBLE))
+                    - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0
+                    / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0) AS roi
+            FROM main_table
+            WHERE {_q(campaign)} IS NOT NULL
+            GROUP BY {_q(campaign)}
+            ORDER BY roi DESC
+            LIMIT 1
+        """
+        _, roi_rows = _execute(dataset, roi_sql)
+        if roi_rows:
+            findings.append(
+                f"Highest-ROI campaign is {roi_rows[0].get('label')} "
+                f"at {(_safe_float(roi_rows[0].get('roi')) or 0.0):,.2f}%."
             )
 
     answer = " ".join(findings)
