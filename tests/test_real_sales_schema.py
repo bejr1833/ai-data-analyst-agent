@@ -112,5 +112,108 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertIn("AVG(", averaged["sql"])
 
 
+    def test_highest_total_revenue_ranks_groups_by_sum_not_max(self):
+        result = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Which region has the highest total revenue?",
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("SUM(", result["sql"])
+        self.assertEqual(result["rows"][0]["region"], "South")
+        self.assertEqual(float(result["rows"][0]["value"]), 400.0)
+
+    def test_contextual_followup_explains_previous_grouped_result(self):
+        previous = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Show revenue by region",
+        )
+        history = [
+            {"role": "user", "text": "Show revenue by region"},
+            {
+                "role": "assistant",
+                "text": previous["answer"],
+                "rows": previous["rows"],
+                "columns": previous["columns"],
+                "sql": previous["sql"],
+                "visualization": previous["visualization"],
+                "resultType": previous["type"],
+            },
+        ]
+        result = llm_analyst._try_contextual_followup(
+            self.dataset,
+            "Explain these results",
+            history,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "contextual_followup")
+        self.assertIn("South", result["answer"])
+        self.assertIn("400.00", result["answer"])
+        self.assertIn("summed", result["answer"])
+        self.assertIn("% of the displayed group total", result["answer"])
+
+    def test_generic_category_followup_uses_previous_chart_dimension(self):
+        previous = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Show revenue by region",
+        )
+        history = [
+            {"role": "user", "text": "Show revenue by region"},
+            {
+                "role": "assistant",
+                "text": previous["answer"],
+                "rows": previous["rows"],
+                "columns": previous["columns"],
+                "sql": previous["sql"],
+                "visualization": previous["visualization"],
+                "resultType": previous["type"],
+            },
+        ]
+        result = llm_analyst._try_contextual_dimension_ranking(
+            self.dataset,
+            "Which region contributes the most?",
+            history,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["rows"][0]["region"], "South")
+        self.assertIn("South", result["answer"])
+        self.assertIn("400.00", result["answer"])
+
+    def test_agent_routes_chart_context_followup_without_model_fallback(self):
+        previous = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Show revenue by region",
+        )
+        history = [
+            {"role": "user", "text": "Show revenue by region"},
+            {
+                "role": "assistant",
+                "text": previous["answer"],
+                "rows": previous["rows"],
+                "columns": previous["columns"],
+                "sql": previous["sql"],
+                "visualization": previous["visualization"],
+                "resultType": previous["type"],
+            },
+        ]
+        result = AnalystAgent(self.dataset).run(
+            "Which region contributes the most?",
+            history,
+        )
+        self.assertEqual(result["type"], "contextual_followup")
+        self.assertEqual(result["rows"][0]["region"], "South")
+        self.assertEqual(result["model"], "local")
+
+    def test_quick_insight_correlation_matrix_is_local_and_deterministic(self):
+        result = llm_analyst._try_statistical_query(
+            self.dataset,
+            "Show the correlation matrix for numeric columns.",
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "correlation_analysis")
+        self.assertGreater(len(result["rows"]), 0)
+        self.assertIn("corr(", result["sql"].lower())
+        self.assertIn("not causation", result["answer"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()
