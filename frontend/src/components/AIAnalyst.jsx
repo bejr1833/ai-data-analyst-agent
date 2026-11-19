@@ -44,7 +44,7 @@ function buildSuggestionGroups(columns = []) {
   const conversions = findNumeric(/(^| )(conversion|conversions|orders|orders count)( |$)/);
   const primaryMetric = revenue || findNumeric(/(^| )(profit|score|marks|percentage|value|quantity|units)( |$)/) || numeric[0];
   const dateColumn = findDate();
-  const dimensions = categorical.slice(0, 4);
+  const dimensions = categorical.filter((item) => item !== dateColumn).slice(0, 4);
   const groups = [];
 
   if (primaryMetric) {
