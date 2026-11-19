@@ -3660,6 +3660,11 @@ def _normalize_conversation_history(
 
         if item.get("result") is not None:
             entry["result"] = item["result"]
+        else:
+            # Preserve the result shape emitted by frontend/src/components/AIAnalyst.jsx.
+            for key in ("rows", "columns", "sql", "visualization", "resultType", "type", "model", "agent"):
+                if key in item:
+                    entry[key] = item[key]
 
         normalized.append(entry)
 
