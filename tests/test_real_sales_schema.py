@@ -61,7 +61,7 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["type"], "unsupported_metric")
         self.assertIn("total cost or investment", result["answer"].lower())
-        self.assertNotIn("SUM(\\"marketing_spend\\")", result["sql"])
+        self.assertNotIn("SUM(\"marketing_spend\")", result["sql"])
 
     def test_marketing_roi_uses_recorded_profit_over_marketing_spend(self):
         result = llm_analyst._try_derived_metric_query(
@@ -70,8 +70,8 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["type"], "derived_metric")
         self.assertAlmostEqual(float(result["rows"][0]["value"]), 306.25, places=2)
-        self.assertIn("SUM(\\"profit\\")", result["sql"])
-        self.assertIn("SUM(\\"marketing_spend\\")", result["sql"])
+        self.assertIn("SUM(\"profit\")", result["sql"])
+        self.assertIn("SUM(\"marketing_spend\")", result["sql"])
         self.assertEqual(result["visualization"]["suffix"], "%")
         self.assertIn("306.25%", result["answer"])
 
