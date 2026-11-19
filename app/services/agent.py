@@ -292,6 +292,39 @@ class AnalystAgent:
                 )
             ]
 
+        # 7. Executive summaries / main insights.
+        # Route these requests to the deterministic, schema-aware summary
+        # engine. The tool is registered above but was previously never
+        # selected by the planner, causing "What is the main insight?" to
+        # fall through to generic SQL/Gemini and sometimes return weak output.
+        if self._contains_any(
+            q,
+            [
+                "main insight",
+                "key insight",
+                "key insights",
+                "main finding",
+                "key finding",
+                "key findings",
+                "important finding",
+                "executive summary",
+                "business summary",
+                "overall summary",
+                "dataset summary",
+                "summarize the dataset",
+                "summarize this dataset",
+                "overall takeaway",
+                "takeaway",
+                "conclude",
+            ],
+        ):
+            return [
+                AgentStep(
+                    "main_insight",
+                    "Build an evidence-based summary from available dataset fields",
+                )
+            ]
+
         # 7. Statistics / correlation / distribution.
         if self._contains_any(
             q,
