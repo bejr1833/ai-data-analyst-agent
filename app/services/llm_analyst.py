@@ -3243,6 +3243,100 @@ def _try_percentage_query(
     return None
 
 
+def _try_derived_metric_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """Calculate common business KPIs only from semantically matched columns."""
+    q = _norm(question)
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+
+    def resolve(aliases):
+        # Prefer exact normalized column names, then unambiguous aliases.
+        for column in columns:
+            if _norm(column) in aliases and column in numeric:
+                return column
+        matches = [column for column in columns if column in numeric and any(
+            alias in _norm(column).split() or _norm(column) == alias
+            for alias in aliases
+        )]
+        return matches[0] if len(matches) == 1 else None
+
+    revenue = resolve({"revenue", "sales", "income", "turnover"})
+    cost = resolve({"cost", "spend", "expense", "expenses", "marketing cost", "marketing spend"})
+    leads = resolve({"lead", "leads"})
+    conversions = resolve({"conversion", "conversions", "converted", "orders"})
+
+    intent = None
+    if "return on investment" in q or re.search(r"\\broi\\b", q):
+        intent = "roi"
+        required = (revenue, cost)
+        expression = f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0 / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0)" if all(required) else None
+        label = "ROI"
+        suffix = "%"
+    elif "profit margin" in q:
+        intent = "profit_margin"
+        required = (revenue, cost)
+        expression = f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0 / NULLIF(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)), 0)" if all(required) else None
+        label, suffix = "Profit margin", "%"
+    elif "conversion rate" in q or "lead conversion" in q:
+        intent = "conversion_rate"
+        required = (conversions, leads)
+        expression = f"SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) * 100.0 / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
+        label, suffix = "Conversion rate", "%"
+    elif "cost per lead" in q or re.search(r"\\bcpl\\b", q):
+        intent = "cost_per_lead"
+        required = (cost, leads)
+        expression = f"SUM(TRY_CAST({_q(cost)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
+        label, suffix = "Cost per lead", ""
+    elif "revenue per conversion" in q:
+        intent = "revenue_per_conversion"
+        required = (revenue, conversions)
+        expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(conversions)} AS DOUBLE)), 0)" if all(required) else None
+        label, suffix = "Revenue per conversion", ""
+    elif "profit" in q:
+        intent = "profit"
+        required = (revenue, cost)
+        expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))" if all(required) else None
+        label, suffix = "Profit", ""
+    else:
+        return None
+
+    if not expression:
+        available = [name for name, col in (("revenue/sales", revenue), ("cost/spend", cost), ("leads", leads), ("conversions", conversions)) if col]
+        return _base_result(
+            question, "unsupported_metric",
+            f"I can't calculate {label.lower()} reliably because the required source columns are missing or ambiguous. Matched columns: {', '.join(available) if available else 'none'}.",
+            "", [], [], {"type": "table", "title": "Required source columns"},
+        )
+
+    group = _detect_group_column(q, columns)
+    group_sql = f", {_q(group)} AS {_q(group)}" if group else ""
+    group_by = f" GROUP BY {_q(group)} ORDER BY value DESC" if group else ""
+    sql = f"SELECT {expression} AS value{group_sql} FROM main_table{group_by}"
+    result_columns, rows = _execute(dataset, sql)
+    if not rows:
+        return None
+
+    def fmt(value):
+        if value is None:
+            return "N/A"
+        return f"{float(value):,.2f}{suffix}"
+
+    if group:
+        summary = "; ".join(f"{row.get(group)}: {fmt(row.get('value'))}" for row in rows)
+        answer = f"{label} by {_readable(group)}: {summary}."
+    else:
+        answer = f"{label}: {fmt(rows[0].get('value'))}."
+
+    return _base_result(
+        question, "derived_metric", answer, sql, result_columns, rows,
+        {"type": "bar" if group else "metric", "x": group or "", "y": "value", "title": f"{label} by {_readable(group)}" if group else label},
+        metric_name=intent,
+    )
+
+
 def _try_anomaly_query(
     dataset: Dataset,
     question: str,
@@ -3339,80 +3433,63 @@ def _try_trend_query(
     dataset: Dataset,
     question: str,
 ) -> dict | None:
+    """Aggregate a numeric metric at the requested calendar grain."""
     q = _norm(question)
     dates = _date_columns(dataset)
-
     if not dates:
         return None
 
-    if not any(
-        phrase in q
-        for phrase in (
-            "trend",
-            "over time",
-            "time series",
-            "monthly",
-            "daily",
-            "yearly",
-        )
-    ):
+    if not any(phrase in q for phrase in (
+        "trend", "over time", "time series", "monthly", "daily",
+        "weekly", "yearly", "historical trend", "growth over time",
+    )):
         return None
 
     columns = _columns(dataset)
     numeric = _numeric_columns(dataset)
-
     date_column = dates[0]
-
-    metric = _detect_metric_column(
-        q,
-        columns,
-        numeric,
-    )
-
+    metric = _detect_metric_column(q, columns, numeric)
     if not metric:
         return None
 
+    if any(word in q for word in ("monthly", "by month", "per month")):
+        grain = "month"
+    elif any(word in q for word in ("weekly", "by week", "per week")):
+        grain = "week"
+    elif any(word in q for word in ("yearly", "annually", "by year", "per year")):
+        grain = "year"
+    elif any(word in q for word in ("daily", "by day", "per day")):
+        grain = "day"
+    else:
+        grain = "day"
+
+    aggregation = _detect_aggregation(q)
+    aggregate_sql = "AVG" if aggregation == "AVG" else "SUM"
+    period_sql = f"DATE_TRUNC('{grain}', TRY_CAST({_q(date_column)} AS DATE))"
     sql = f"""
         SELECT
-            CAST({_q(date_column)} AS DATE)
-                AS {_q(date_column)},
-            AVG(
-                TRY_CAST({_q(metric)} AS DOUBLE)
-            ) AS value
+            {period_sql} AS period,
+            {aggregate_sql}(TRY_CAST({_q(metric)} AS DOUBLE)) AS value
         FROM main_table
-        WHERE {_q(date_column)} IS NOT NULL
-        GROUP BY CAST({_q(date_column)} AS DATE)
-        ORDER BY CAST({_q(date_column)} AS DATE)
+        WHERE TRY_CAST({_q(date_column)} AS DATE) IS NOT NULL
+        GROUP BY period
+        ORDER BY period
     """
-
-    result_columns, rows = _execute(
-        dataset,
-        sql,
-    )
-
+    result_columns, rows = _execute(dataset, sql)
     if not rows:
         return None
 
+    grain_label = {"day": "Daily", "week": "Weekly", "month": "Monthly", "year": "Yearly"}[grain]
+    aggregation_label = "average" if aggregate_sql == "AVG" else "total"
     return _base_result(
         question,
         "trend_analysis",
-        (
-            f"The trend of {_readable(metric)} "
-            f"over {_readable(date_column)} "
-            "is returned in the result."
-        ),
+        f"{grain_label} {aggregation_label} {_readable(metric)} is shown in the result.",
         sql,
         result_columns,
         rows,
-        {
-            "type": "line",
-            "x": date_column,
-            "y": "value",
-            "title": (
-                f"{_readable(metric).title()} "
-                "over Time"
-            ),
-        },
+        {"type": "line", "x": "period", "y": "value",
+         "title": f"{grain_label} { _readable(metric).title() }"},
     )
 
 
@@ -3637,7 +3714,19 @@ def _try_contextual_followup(
 
     previous_result = previous.get("result")
 
+    # The React client sends the previous result as top-level fields
+    # (rows/sql/visualization/resultType), not as a nested "result" object.
     if not isinstance(previous_result, dict):
+        previous_result = {
+            "answer": previous.get("text", ""),
+            "rows": previous.get("rows", []),
+            "sql": previous.get("sql", ""),
+            "columns": previous.get("columns", []),
+            "visualization": previous.get("visualization"),
+            "type": previous.get("resultType") or previous.get("type"),
+        }
+
+    if not isinstance(previous_result.get("rows", []), list):
         return None
 
     answer = (
@@ -3946,6 +4035,7 @@ def analyze_with_llm(
     )
 
     engines = [
+        ("derived_metrics", lambda: _try_derived_metric_query(dataset, question)),
         (
             "contextual_followup",
             lambda: _try_contextual_followup(
