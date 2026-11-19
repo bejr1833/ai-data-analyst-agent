@@ -372,6 +372,18 @@ def _resolve_column(
     if q in normalized:
         return normalized[q]
 
+    # Domain synonym: in datasets where a separate Region field is absent,
+    # a Team field containing geographic labels (North/South/East/West) can
+    # represent the region dimension. Exact real columns always take priority.
+    geographic_aliases = {
+        "region": {"region", "regions", "territory", "territories", "area", "areas"},
+        "regions": {"region", "regions", "territory", "territories", "area", "areas"},
+        "territory": {"region", "regions", "territory", "territories", "area", "areas"},
+        "territories": {"region", "regions", "territory", "territories", "area", "areas"},
+    }
+    if q in geographic_aliases and "team" in normalized:
+        return normalized["team"]
+
     for name in sorted(
         normalized,
         key=len,
@@ -2640,7 +2652,15 @@ def _try_grouped_query(
         aggregation = "AVG"
 
     if not aggregation and metric:
-        aggregation = "AVG"
+        # In business-style "show revenue by region" questions, totals are
+        # the expected interpretation. Keep AVG as the neutral default for
+        # ordinary statistical datasets.
+        metric_name = _norm(metric)
+        revenue_cost_fields = {
+            "revenue", "sales", "turnover", "income",
+            "cost", "spend", "expense", "expenses",
+        }
+        aggregation = "SUM" if metric_name in revenue_cost_fields else "AVG"
 
     if not aggregation:
         return None
@@ -3564,78 +3584,163 @@ def _try_main_insight_query(
     dataset: Dataset,
     question: str,
 ) -> dict | None:
-    """
-    Generic summary/insight engine. It never assumes revenue,
-    sales, products, regions, or any other business concept.
-    """
+    """Create a useful, evidence-backed executive summary from the dataset."""
     q = _norm(question)
-
-    if not any(
-        phrase in q
-        for phrase in (
-            "insight",
-            "key finding",
-            "main finding",
-            "important finding",
-            "summary",
-        )
-    ):
+    if not any(phrase in q for phrase in (
+        "insight", "key finding", "main finding",
+        "important finding", "summary", "takeaway", "conclude",
+    )):
         return None
 
+    columns = _columns(dataset)
     numeric = _numeric_columns(dataset)
-
     if not numeric:
         return None
 
-    metrics = numeric[:5]
+    # If the schema contains a common sales funnel, calculate business KPIs
+    # from totals. Do not present column averages as an executive insight.
+    revenue = _detect_metric_column("revenue", columns, numeric)
+    cost = _detect_metric_column("cost", columns, numeric)
+    leads = _detect_metric_column("leads", columns, numeric)
+    conversions = _detect_metric_column("conversions", columns, numeric)
 
-    select_parts = [
-        (
-            f"AVG(TRY_CAST({_q(column)} AS DOUBLE)) "
-            f"AS {_q(column + '_avg')}"
+    if all((revenue, cost, leads, conversions)):
+        summary_sql = f"""
+            SELECT
+                COUNT(*) AS record_count,
+                SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) AS total_revenue,
+                SUM(TRY_CAST({_q(cost)} AS DOUBLE)) AS total_cost,
+                SUM(TRY_CAST({_q(leads)} AS DOUBLE)) AS total_leads,
+                SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) AS total_conversions
+            FROM main_table
+        """
+        _, summary_rows = _execute(dataset, summary_sql)
+        if not summary_rows:
+            return None
+
+        summary = summary_rows[0]
+        total_revenue = _safe_float(summary.get("total_revenue")) or 0.0
+        total_cost = _safe_float(summary.get("total_cost")) or 0.0
+        total_leads = _safe_float(summary.get("total_leads")) or 0.0
+        total_conversions = _safe_float(summary.get("total_conversions")) or 0.0
+        profit = total_revenue - total_cost
+        roi = profit * 100.0 / total_cost if total_cost else None
+        conversion_rate = total_conversions * 100.0 / total_leads if total_leads else None
+
+        def top_group(dimension):
+            if not dimension:
+                return None
+            sql = f"""
+                SELECT {_q(dimension)} AS label,
+                       SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) AS revenue
+                FROM main_table
+                WHERE {_q(dimension)} IS NOT NULL
+                GROUP BY {_q(dimension)}
+                ORDER BY revenue DESC
+                LIMIT 1
+            """
+            _, rows = _execute(dataset, sql)
+            return rows[0] if rows else None
+
+        team_column = _resolve_column("team", columns)
+        campaign_column = _resolve_column("campaign", columns)
+        top_team = top_group(team_column)
+        top_campaign = top_group(campaign_column)
+
+        findings = [
+            f"Total revenue is {total_revenue:,.2f} across {int(summary.get('record_count') or 0):,} records.",
+            f"Estimated profit is {profit:,.2f} and ROI is {roi:,.2f}%." if roi is not None else f"Estimated profit is {profit:,.2f}.",
+            f"Overall conversion rate is {conversion_rate:,.2f}% ({total_conversions:,.0f} conversions from {total_leads:,.0f} leads)." if conversion_rate is not None else "Conversion rate cannot be calculated because total leads are zero.",
+        ]
+        if top_team:
+            share = (_safe_float(top_team.get("revenue")) or 0.0) * 100.0 / total_revenue if total_revenue else 0.0
+            findings.append(
+                f"Highest-revenue {_readable(team_column)} is {top_team.get('label')} "
+                f"at {(_safe_float(top_team.get('revenue')) or 0.0):,.2f} "
+                f"({share:.1f}% of total revenue)."
+            )
+        if top_campaign:
+            findings.append(
+                f"Highest-revenue campaign is {top_campaign.get('label')} "
+                f"at {(_safe_float(top_campaign.get('revenue')) or 0.0):,.2f}."
+            )
+
+        if campaign_column and cost:
+            roi_sql = f"""
+                SELECT {_q(campaign_column)} AS label,
+                       SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) AS revenue,
+                       SUM(TRY_CAST({_q(cost)} AS DOUBLE)) AS cost,
+                       (SUM(TRY_CAST({_q(revenue)} AS DOUBLE))
+                        - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0
+                        / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0) AS roi
+                FROM main_table
+                WHERE {_q(campaign_column)} IS NOT NULL
+                GROUP BY {_q(campaign_column)}
+                ORDER BY roi DESC
+                LIMIT 1
+            """
+            _, roi_rows = _execute(dataset, roi_sql)
+            if roi_rows:
+                best_roi = roi_rows[0]
+                findings.append(
+                    f"Highest-ROI campaign is {best_roi.get('label')} "
+                    f"at {(_safe_float(best_roi.get('roi')) or 0.0):,.2f}% "
+                    f"on {(_safe_float(best_roi.get('cost')) or 0.0):,.2f} spend."
+                )
+
+        answer = " ".join(findings)
+        result_rows = [{
+            "records": int(summary.get("record_count") or 0),
+            "total_revenue": total_revenue,
+            "total_cost": total_cost,
+            "profit": profit,
+            "roi_percent": roi,
+            "total_leads": total_leads,
+            "total_conversions": total_conversions,
+            "conversion_rate_percent": conversion_rate,
+        }]
+        return _base_result(
+            question,
+            "main_insight",
+            answer,
+            summary_sql,
+            list(result_rows[0].keys()),
+            result_rows,
+            {
+                "type": "metric",
+                "title": "Executive business summary",
+                "x": "",
+                "y": "total_revenue",
+            },
+            key_findings=findings,
         )
+
+    # Generic fallback for non-sales datasets: summarize numeric statistics
+    # while clearly labelling them as averages rather than "main insights".
+    metrics = numeric[:5]
+    select_parts = [
+        f"AVG(TRY_CAST({_q(column)} AS DOUBLE)) AS {_q(column + '_avg')}"
         for column in metrics
     ]
-
-    sql = (
-        "SELECT "
-        + ", ".join(select_parts)
-        + " FROM main_table"
-    )
-
-    result_columns, rows = _execute(
-        dataset,
-        sql,
-    )
-
+    sql = "SELECT " + ", ".join(select_parts) + " FROM main_table"
+    result_columns, rows = _execute(dataset, sql)
     if not rows:
         return None
 
     parts = []
-
     for column in metrics:
-        value = _safe_float(
-            rows[0].get(column + "_avg")
-        )
-
+        value = _safe_float(rows[0].get(column + "_avg"))
         if value is not None:
-            parts.append(
-                f"{_readable(column)}={value:.2f}"
-            )
+            parts.append(f"{_readable(column)} average={value:,.2f}")
 
     answer = (
-        "A summary of the numeric columns is: "
-        + ", ".join(parts)
-        + "."
+        "This dataset does not expose a standard revenue/cost funnel, so "
+        "here are descriptive averages rather than inferred business KPIs: "
+        + ", ".join(parts) + "."
     )
-
     return _base_result(
-        question,
-        "main_insight",
-        answer,
-        sql,
-        result_columns,
-        rows,
+        question, "main_insight", answer, sql, result_columns, rows,
+        {"type": "table", "title": "Descriptive numeric summary"},
     )
 
 

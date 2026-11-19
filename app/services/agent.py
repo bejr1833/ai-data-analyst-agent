@@ -1105,17 +1105,46 @@ class AnalystAgent:
             fallback_used = True
             print("Agent: using general SQL fallback.")
             try:
-                result = self.llm.analyze_with_llm(
-                    self.dataset,
-                    question,
-                    conversation_history=conversation_history,
-                )
-            except TypeError:
-                # Backward compatibility with older llm_analyst.py.
-                result = self.llm.analyze_with_llm(
-                    self.dataset,
-                    question,
-                )
+                try:
+                    result = self.llm.analyze_with_llm(
+                        self.dataset,
+                        question,
+                        conversation_history=conversation_history,
+                    )
+                except TypeError:
+                    # Backward compatibility with older llm_analyst.py.
+                    result = self.llm.analyze_with_llm(
+                        self.dataset,
+                        question,
+                    )
+            except Exception as exc:
+                # External model availability must never turn an otherwise
+                # healthy dataset query into an opaque HTTP 500 response.
+                print("Agent fallback unavailable:", repr(exc))
+                available_columns = list(getattr(self.dataset, "columns", []) or [])
+                try:
+                    available_numeric = self.llm._numeric_columns(self.dataset)
+                except Exception:
+                    available_numeric = []
+                available_text = ", ".join(available_columns[:12]) or "not available"
+                result = {
+                    "question": question,
+                    "type": "analysis_unavailable",
+                    "answer": (
+                        "I couldn't confidently map that request to the uploaded "
+                        "dataset, and the optional AI fallback is temporarily "
+                        "unavailable. Available columns include: "
+                        f"{available_text}. Try naming one of these fields "
+                        "explicitly or use a suggested question."
+                    ),
+                    "sql": None,
+                    "columns": [],
+                    "rows": [],
+                    "row_count": 0,
+                    "model": "local",
+                    "visualization": {"type": "table", "title": "Question needs clarification"},
+                    "available_numeric_columns": available_numeric,
+                }
 
         result = self._validate_result(result, question)
 

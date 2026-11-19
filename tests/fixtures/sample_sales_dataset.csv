@@ -1,0 +1,21 @@
+index,date,campaign,salesperson,channel,team,leads,conversions,revenue,cost
+0,2026-10-01,Diwali Mega Sale,Aarav Sharma,Digital Ads,North,120,18,54000,12500
+1,2026-10-02,Diwali Mega Sale,Priya Reddy,Social Media,South,95,14,42000,9800
+2,2026-10-03,Website Retargeting,Rahul Verma,Email,West,80,16,48000,6200
+3,2026-10-04,New Customer Drive,Sneha Rao,Search Ads,South,140,21,73500,15000
+4,2026-10-05,Website Retargeting,Kiran Kumar,Digital Ads,East,75,9,27000,7100
+5,2026-10-06,Festive Email Push,Aarav Sharma,Email,North,110,22,66000,5200
+6,2026-10-07,New Customer Drive,Priya Reddy,Search Ads,South,135,19,66500,14200
+7,2026-10-08,Brand Awareness Q4,Rahul Verma,Social Media,West,160,12,36000,11000
+8,2026-10-09,Festive Email Push,Sneha Rao,Email,South,125,25,87500,6000
+9,2026-10-10,Website Retargeting,Kiran Kumar,Search Ads,East,90,17,59500,7600
+10,2026-10-11,Diwali Mega Sale,Aarav Sharma,Social Media,North,150,24,96000,17500
+11,2026-10-12,New Customer Drive,Rahul Verma,Digital Ads,West,105,13,39000,10200
+12,2026-10-13,Brand Awareness Q4,Priya Reddy,Search Ads,South,170,15,45000,13000
+13,2026-10-14,Festive Email Push,Kiran Kumar,Email,East,115,20,70000,5500
+14,2026-10-15,Diwali Mega Sale,Sneha Rao,Digital Ads,South,180,32,128000,22000
+15,2026-10-16,Website Retargeting,Aarav Sharma,Email,North,100,19,66500,6300
+16,2026-10-17,New Customer Drive,Kiran Kumar,Search Ads,East,130,18,63000,13500
+17,2026-10-18,Brand Awareness Q4,Sneha Rao,Social Media,South,155,20,60000,12000
+18,2026-10-19,Festive Email Push,Rahul Verma,Email,West,145,28,98000,6500
+19,2026-10-20,Diwali Mega Sale,Priya Reddy,Digital Ads,South,190,35,140000,24000
