@@ -239,5 +239,30 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["region"], "South")
 
 
+    def test_minimum_and_maximum_revenue_returns_both_extremes(self):
+        result = llm_analyst._try_numeric_query(
+            self.dataset,
+            "What are the minimum and maximum revenue values?",
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "numeric_range")
+        self.assertEqual(float(result["rows"][0]["minimum"]), 40.0)
+        self.assertEqual(float(result["rows"][0]["maximum"]), 300.0)
+        self.assertEqual(int(result["rows"][0]["count"]), 6)
+        self.assertIn("minimum value is 40.00", result["answer"])
+        self.assertIn("maximum value is 300.00", result["answer"])
+
+    def test_agent_routes_minimum_and_maximum_to_numeric_analysis(self):
+        agent = AnalystAgent(self.dataset)
+        self.assertEqual(
+            agent.plan("What are the minimum and maximum revenue values?")[0].tool,
+            "numeric_analysis",
+        )
+        result = agent.run("What are the minimum and maximum revenue values?")
+        self.assertEqual(result["type"], "numeric_range")
+        self.assertEqual(float(result["rows"][0]["minimum"]), 40.0)
+        self.assertEqual(float(result["rows"][0]["maximum"]), 300.0)
+
+
 if __name__ == "__main__":
     unittest.main()
