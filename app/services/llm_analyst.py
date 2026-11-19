@@ -2513,6 +2513,12 @@ def _try_grouped_query(
                 "how many",
                 "number of",
                 "count",
+                "distribution",
+                "most records",
+                "fewest records",
+                "least records",
+                "most frequent",
+                "frequency",
             )
         )
     )
@@ -2691,6 +2697,13 @@ def _try_grouped_query(
     # Grouped row counts
     # ------------------------------------------------------------
     if count_mode and not metric:
+        count_order = (
+            "ASC" if any(phrase in q for phrase in ("fewest records", "least records"))
+            else "DESC"
+        )
+        count_limit = "LIMIT 1" if (
+            "most records" in q or "fewest records" in q or "least records" in q
+        ) else ""
         sql = f"""
             SELECT
                 {_q(group)} AS {_q(group)},
@@ -2698,7 +2711,8 @@ def _try_grouped_query(
             FROM main_table
             WHERE {_q(group)} IS NOT NULL
             GROUP BY {_q(group)}
-            ORDER BY count DESC
+            ORDER BY count {count_order}
+            {count_limit}
         """
 
         result_columns, rows = _execute(
