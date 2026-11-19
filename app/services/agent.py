@@ -325,6 +325,25 @@ class AnalystAgent:
                 )
             ]
 
+        # A categorical distribution is a grouped row-count analysis.
+        # Resolve its dimension before the generic statistics route.
+        if "distribution" in q or "breakdown by" in q:
+            try:
+                from app.services.llm_analyst import _detect_group_column
+
+                dataset_columns = getattr(self.dataset, "columns", None)
+                if dataset_columns is None:
+                    dataset_columns = list(self.dataset.df.columns)
+                if _detect_group_column(q, list(dataset_columns)):
+                    return [
+                        AgentStep(
+                            "grouped_analysis",
+                            "Show the record distribution across the requested category",
+                        )
+                    ]
+            except Exception:
+                pass
+
         # 7. Statistics / correlation / distribution.
         if self._contains_any(
             q,
