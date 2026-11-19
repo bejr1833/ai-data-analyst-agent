@@ -2351,9 +2351,9 @@ def _try_grouped_query(
     aggregation = _detect_aggregation(q)
     # In grouped rankings, "highest total revenue" means the group with
     # the largest SUM(revenue), not MAX(revenue) within each group.
-    if re.search(r"\\b(?:highest|largest|most)\\s+total\\b", q):
+    if re.search(r"\b(?:highest|largest|most)\s+total\b", q):
         aggregation = "SUM"
-    elif re.search(r"\\b(?:highest|largest|most)\\s+average\\b", q):
+    elif re.search(r"\b(?:highest|largest|most)\s+average\b", q):
         aggregation = "AVG"
     # ------------------------------------------------------------
     # Multi-column aggregation
@@ -2987,6 +2987,8 @@ def _try_statistical_query(
             "standard deviation",
             "std",
             "variance",
+            "correlation",
+            "correlate",
             "statistics",
             "statistical summary",
             "quartile",
