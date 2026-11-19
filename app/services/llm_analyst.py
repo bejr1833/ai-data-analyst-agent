@@ -636,6 +636,8 @@ def _detect_group_column(
     # 1. Explicit grouping phrases
     # ------------------------------------------------------------
     patterns = [
+        r"\bdistribution\s+of\s+(.+?)(?:[?.!,]|$)",
+        r"\bbreakdown\s+by\s+(.+?)(?:[?.!,]|$)",
         r"\bby\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
         r"\bfor each\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
         r"\beach\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
