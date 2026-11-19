@@ -3665,6 +3665,29 @@ def _try_main_insight_query(
                 f"at {(_safe_float(top_campaign.get('revenue')) or 0.0):,.2f}."
             )
 
+        if campaign_column and cost:
+            roi_sql = f"""
+                SELECT {_q(campaign_column)} AS label,
+                       SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) AS revenue,
+                       SUM(TRY_CAST({_q(cost)} AS DOUBLE)) AS cost,
+                       (SUM(TRY_CAST({_q(revenue)} AS DOUBLE))
+                        - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0
+                        / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0) AS roi
+                FROM main_table
+                WHERE {_q(campaign_column)} IS NOT NULL
+                GROUP BY {_q(campaign_column)}
+                ORDER BY roi DESC
+                LIMIT 1
+            """
+            _, roi_rows = _execute(dataset, roi_sql)
+            if roi_rows:
+                best_roi = roi_rows[0]
+                findings.append(
+                    f"Highest-ROI campaign is {best_roi.get('label')} "
+                    f"at {(_safe_float(best_roi.get('roi')) or 0.0):,.2f}% "
+                    f"on {(_safe_float(best_roi.get('cost')) or 0.0):,.2f} spend."
+                )
+
         answer = " ".join(findings)
         result_rows = [{
             "records": int(summary.get("record_count") or 0),
