@@ -2363,7 +2363,7 @@ def _try_grouped_query(
             FROM main_table
             WHERE {_q(group)} IS NOT NULL
             GROUP BY {_q(group)}
-            ORDER BY count {count_order}
+            ORDER BY count {count_order}, {_q(group)} ASC
             {count_limit}
         """
         result_columns, rows = _execute(dataset, sql)
