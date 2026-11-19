@@ -54,6 +54,27 @@ class RealSalesSchemaTests(unittest.TestCase):
         plan = AnalystAgent(self.dataset).plan("show me revenue across regions")
         self.assertEqual(plan[0].tool, "grouped_analysis")
 
+    def test_generic_roi_does_not_mistake_marketing_spend_for_total_cost(self):
+        result = llm_analyst._try_derived_metric_query(
+            self.dataset, "Calculate ROI as a percentage."
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "unsupported_metric")
+        self.assertIn("total cost or investment", result["answer"].lower())
+        self.assertNotIn("marketing_spend", result.get("sql") or "")
+
+    def test_marketing_roi_uses_recorded_profit_over_marketing_spend(self):
+        result = llm_analyst._try_derived_metric_query(
+            self.dataset, "Calculate marketing ROI as a percentage."
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "derived_metric")
+        self.assertAlmostEqual(float(result["rows"][0]["value"]), 306.25, places=2)
+        self.assertIn('TRY_CAST("profit" AS DOUBLE)', result["sql"])
+        self.assertIn('TRY_CAST("marketing_spend" AS DOUBLE)', result["sql"])
+        self.assertEqual(result["visualization"]["suffix"], "%")
+        self.assertIn("306.25%", result["answer"])
+
     def test_main_insight_uses_real_schema_and_weighted_metrics(self):
         result = llm_analyst._try_main_insight_query(
             self.dataset, "What is the main insight?"

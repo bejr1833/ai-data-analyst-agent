@@ -393,7 +393,7 @@ function cleanDisplayText(value) {
 
   return text;
 }
-function formatNumber(value) {
+function formatNumber(value, fractionDigits) {
   if (value === null || value === undefined || value === "") {
     return "-";
   }
@@ -402,7 +402,15 @@ function formatNumber(value) {
 
   if (!Number.isFinite(number)) return String(value);
 
-  return number.toLocaleString("en-US");
+  return number.toLocaleString(
+    "en-US",
+    Number.isInteger(fractionDigits)
+      ? {
+          minimumFractionDigits: fractionDigits,
+          maximumFractionDigits: fractionDigits,
+        }
+      : undefined
+  );
 }
 
 function isMetricVisualization(visualization) {
@@ -431,6 +439,11 @@ function MetricCard({ rows, visualization }) {
     : firstRow?.[keys[0]];
 
   const title = visualization?.title || "Analysis Result";
+  const suffix = visualization?.suffix ||
+    (/\b(roi|margin|conversion rate|return rate|percentage)\b/i.test(title)
+      ? "%"
+      : "");
+  const isPercentage = suffix === "%";
 
   return (
     <div
@@ -468,7 +481,7 @@ function MetricCard({ rows, visualization }) {
           wordBreak: "break-word",
         }}
       >
-        {formatNumber(value)}
+        {formatNumber(value, isPercentage ? 2 : undefined)}{suffix}
       </div>
     </div>
   );
