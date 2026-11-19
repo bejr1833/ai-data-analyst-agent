@@ -791,7 +791,7 @@ function getFriendlyAnalysisError(error) {
   const status = Number(error?.status);
   const detail = String(
     error?.detail ||
-    getFriendlyAnalysisError(error) ||
+    error?.message ||
     ""
   ).trim();
 
@@ -1025,10 +1025,8 @@ useEffect(() => {
       setMessages((previous) => [
         ...previous,
         {
-          role: "assistant",
-          text:
-            error?.message ||
-            "Something went wrong while analyzing the dataset.",
+          role: "error",
+          text: getFriendlyAnalysisError(error),
           rows: [],
           chartRows: [],
           columns: [],
