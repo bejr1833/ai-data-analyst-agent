@@ -2329,6 +2329,70 @@ def _try_grouped_query(
             if group is None and candidate.endswith("s"):
                 group = _resolve_column(candidate[:-1], columns)
 
+    if group is None:
+        mentioned_dimensions = [
+            column for column in _find_mentioned_columns(q, columns)
+            if column not in numeric
+        ]
+        if len(mentioned_dimensions) == 1:
+            group = mentioned_dimensions[0]
+
+    quick_count_intent = any(
+        phrase in q
+        for phrase in (
+            "distribution",
+            "most records",
+            "fewest records",
+            "least records",
+            "most frequent",
+            "frequency",
+        )
+    )
+    if group and quick_count_intent:
+        count_order = (
+            "ASC" if any(phrase in q for phrase in ("fewest records", "least records"))
+            else "DESC"
+        )
+        count_limit = (
+            "LIMIT 1"
+            if any(phrase in q for phrase in ("most records", "fewest records", "least records"))
+            else ""
+        )
+        sql = f"""
+            SELECT {_q(group)} AS {_q(group)}, COUNT(*) AS count
+            FROM main_table
+            WHERE {_q(group)} IS NOT NULL
+            GROUP BY {_q(group)}
+            ORDER BY count {count_order}
+            {count_limit}
+        """
+        result_columns, rows = _execute(dataset, sql)
+        if rows:
+            if count_limit:
+                row = rows[0]
+                answer = (
+                    f"{row[group]} has the {'fewest' if count_order == 'ASC' else 'most'} "
+                    f"records ({int(row['count']):,})."
+                )
+            else:
+                answer = (
+                    f"Record distribution by {_readable(group)}: "
+                    + "; ".join(
+                        f"{row[group]}: {int(row['count']):,}" for row in rows
+                    )
+                    + "."
+                )
+            return _base_result(
+                question,
+                "local_grouped_analysis",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {"type": "bar", "x": group, "y": "count",
+                 "title": f"Record distribution by {_readable(group).title()}"},
+            )
+
     # Ranking questions frequently use:
     # "Which Department has the highest average CGPA?"
     # There is no "by Department" phrase, so infer the grouping
