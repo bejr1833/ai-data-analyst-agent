@@ -440,7 +440,7 @@ function MetricCard({ rows, visualization }) {
 
   const title = visualization?.title || "Analysis Result";
   const suffix = visualization?.suffix ||
-    (/\\b(roi|margin|conversion rate|return rate|percentage)\\b/i.test(title)
+    (/\b(roi|margin|conversion rate|return rate|percentage)\b/i.test(title)
       ? "%"
       : "");
   const isPercentage = suffix === "%";
