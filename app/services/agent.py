@@ -37,6 +37,7 @@ class AnalystAgent:
         self.llm = llm_analyst
 
         self.tools: dict[str, Callable | None] = {
+            "derived_metrics": getattr(llm_analyst, "_try_derived_metric_query", None),
             "local_query": getattr(llm_analyst, "_try_local_query", None),
             "comparison": getattr(
                 llm_analyst, "_try_comparison_query", None
@@ -104,6 +105,22 @@ class AnalystAgent:
                 AgentStep(
                     "contextual_followup",
                     "Explain the previous analysis using conversation context",
+                )
+            ]
+
+        # 2. Derived KPIs are resolved only when their source columns exist.
+        # This keeps calculations deterministic without assuming every dataset
+        # contains sales/marketing fields.
+        if self._contains_any(
+            q,
+            ["profit", "roi", "return on investment", "conversion rate",
+             "lead conversion", "cost per lead", "revenue per conversion",
+             "profit margin"],
+        ):
+            return [
+                AgentStep(
+                    "derived_metrics",
+                    "Calculate a requested KPI from verified dataset columns",
                 )
             ]
 
