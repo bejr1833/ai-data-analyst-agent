@@ -473,6 +473,117 @@ function MetricCard({ rows, visualization }) {
     </div>
   );
 }
+function ExecutiveSummary({ rows, visualization }) {
+  const summary = rows?.[0];
+
+  if (!summary || typeof summary !== "object") {
+    return (
+      <div className="ai-metric-card" style={{ marginTop: 18 }}>
+        No summary metrics were returned. Please inspect the analysis response.
+      </div>
+    );
+  }
+
+  const labels = {
+    records: "Rows analyzed",
+    total_revenue: "Gross revenue",
+    total_net_revenue: "Net revenue",
+    total_profit: "Total profit",
+    roi_percent: "ROI",
+    total_leads: "Total leads",
+    total_conversions: "Conversions",
+    conversion_rate_percent: "Conversion rate",
+    profit_margin_percent: "Profit margin",
+    total_marketing_spend: "Marketing spend",
+    profit_to_marketing_spend_ratio: "Profit / marketing spend",
+    return_rate_percent: "Return rate",
+    average_customer_rating: "Average customer rating",
+  };
+
+  const metrics = Object.entries(summary)
+    .filter(([key, value]) =>
+      key !== "records" ? value !== null && value !== undefined : true
+    )
+    .map(([key, value]) => ({
+      key,
+      label: labels[key] || key.replace(/_/g, " "),
+      value,
+      suffix: key.endsWith("_percent") ? "%" : "",
+      decimals: key === "average_customer_rating" ||
+        key.endsWith("_percent") ||
+        key.endsWith("_ratio") ? 2 : 0,
+    }));
+
+  return (
+    <section
+      className="ai-executive-summary"
+      aria-label="Executive business summary"
+      style={{
+        marginTop: 18,
+        width: "100%",
+        boxSizing: "border-box",
+        padding: 20,
+        borderRadius: 18,
+        border: "1px solid rgba(102, 217, 168, 0.24)",
+        background: "linear-gradient(145deg, rgba(20,45,55,.96), rgba(10,27,38,.96))",
+      }}
+    >
+      <div style={{
+        color: "#9db3c9",
+        fontSize: 12,
+        fontWeight: 800,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        marginBottom: 14,
+      }}>
+        {visualization?.title || "Executive business summary"}
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+        gap: 12,
+      }}>
+        {metrics.map((metric) => (
+          <div
+            key={metric.key}
+            style={{
+              minWidth: 0,
+              padding: "14px 15px",
+              borderRadius: 12,
+              background: "rgba(255,255,255,.045)",
+              border: "1px solid rgba(140,175,210,.12)",
+            }}
+          >
+            <div style={{
+              color: "#9db3c9",
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "capitalize",
+              marginBottom: 7,
+            }}>
+              {metric.label}
+            </div>
+            <div style={{
+              color: "#66d9a8",
+              fontSize: 21,
+              fontWeight: 850,
+              lineHeight: 1.2,
+              overflowWrap: "anywhere",
+            }}>
+              {Number.isFinite(Number(metric.value))
+                ? Number(metric.value).toLocaleString("en-US", {
+                    maximumFractionDigits: metric.decimals,
+                    minimumFractionDigits: metric.decimals > 0 ? 2 : 0,
+                  }) + metric.suffix
+                : String(metric.value)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function DataQualityTable({ rows }) {
   const qualityRows = rows.filter(isQualityRow);
 
@@ -1011,6 +1122,7 @@ useEffect(() => {
           : [],
         sql: result?.sql || "",
         visualization: result?.visualization || null,
+        resultType: result?.type || result?.resultType || null,
         model: result?.model || "",
         followUps: Array.isArray(result?.follow_ups)
           ? result.follow_ups
@@ -1135,6 +1247,9 @@ useEffect(() => {
           const metricResult =
             message.role === "assistant" &&
             isMetricVisualization(message.visualization);
+          const executiveSummary =
+            message.role === "assistant" &&
+            message.resultType === "main_insight";
 
           return (
             <div
@@ -1159,7 +1274,7 @@ useEffect(() => {
                   : undefined
               }
             >
-              {!(message.role === "assistant" && metricResult) && (
+              {!(message.role === "assistant" && metricResult && !executiveSummary) && (
                 <div className="chat-message-text">
                   {cleanDisplayText(message.text)}
                 </div>
@@ -1186,11 +1301,15 @@ useEffect(() => {
                 <DataQualityTable
                   rows={message.rows}
                 />
+              ) : executiveSummary ? (
+                <ExecutiveSummary
+                  rows={message.rows}
+                  visualization={message.visualization}
+                />
               ) : metricResult ? (
                 <MetricCard
                   rows={message.rows}
                   visualization={message.visualization}
-
                 />
               ) : (
                 hasUsableChart(message) && (
@@ -1244,7 +1363,8 @@ useEffect(() => {
                 message.rows?.length > 0 &&
                 !qualityQuestion &&
                 !uniqueValuesQuestion &&
-                !metricResult && (
+                !metricResult &&
+                !executiveSummary && (
                   <DataStory
                       result={{
                         type: message.resultType,
