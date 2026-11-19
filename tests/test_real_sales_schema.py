@@ -77,6 +77,30 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertNotIn("total_cost", result["rows"][0])
         self.assertIn("total_marketing_spend", result["rows"][0])
 
+    def test_agent_routes_main_insight_to_deterministic_summary_tool(self):
+        plan = AnalystAgent(self.dataset).plan("What is the main insight?")
+        self.assertEqual(plan[0].tool, "main_insight")
+
+    def test_agent_executes_main_insight_without_generic_model_fallback(self):
+        result = AnalystAgent(self.dataset).run("What is the main insight?")
+        self.assertEqual(result["type"], "main_insight")
+        self.assertIn("Gross revenue totals 890.00", result["answer"])
+        self.assertIn("Weighted profit margin is 24.81%", result["answer"])
+        self.assertEqual(result["model"], "local")
+
+    def test_common_quick_insight_intents_have_deterministic_routes(self):
+        agent = AnalystAgent(self.dataset)
+        cases = {
+            "Show me revenue by region": "grouped_analysis",
+            "Show monthly revenue trend": "trend",
+            "What is the overall conversion rate?": "derived_metrics",
+            "Show me the data quality summary": "data_quality",
+            "What is the main insight?": "main_insight",
+        }
+        for question, expected_tool in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(agent.plan(question)[0].tool, expected_tool)
+
     def test_revenue_grouping_uses_sum_by_default_but_average_when_requested(self):
         summed = llm_analyst._try_grouped_query(
             self.dataset, "show me revenue across regions"
