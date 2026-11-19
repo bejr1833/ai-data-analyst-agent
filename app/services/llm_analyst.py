@@ -3490,67 +3490,113 @@ def _try_derived_metric_query(
     dataset: Dataset,
     question: str,
 ) -> dict | None:
-    """Calculate common business KPIs only from semantically matched columns."""
+    """Calculate common business KPIs only from semantically valid source columns."""
     q = _norm(question)
     columns = _columns(dataset)
     numeric = _numeric_columns(dataset)
 
     def resolve(aliases):
-        # Prefer exact normalized column names, then unambiguous aliases.
-        for column in columns:
-            if _norm(column) in aliases and column in numeric:
-                return column
-        matches = [column for column in columns if column in numeric and any(
-            alias in _norm(column).split() or _norm(column) == alias
-            for alias in aliases
-        )]
+        wanted = {_norm(alias) for alias in aliases}
+        exact = [column for column in columns if column in numeric and _norm(column) in wanted]
+        if len(exact) == 1:
+            return exact[0]
+        matches = [
+            column for column in columns
+            if column in numeric
+            and any(alias in _norm(column).split() for alias in wanted)
+        ]
         return matches[0] if len(matches) == 1 else None
 
-    revenue = resolve({"revenue", "sales", "income", "turnover"})
-    cost = resolve({"cost", "spend", "expense", "expenses", "marketing cost", "marketing spend"})
+    revenue = resolve({"revenue", "sales", "income", "turnover", "net revenue", "gross revenue"})
+    profit = resolve({"profit", "net profit", "gross profit"})
+    # General ROI must use an actual cost/investment field. Marketing spend is
+    # not silently treated as total business cost; it is only used for an
+    # explicitly requested marketing ROI.
+    cost = resolve({"cost", "total cost", "expense", "expenses", "investment", "investment cost", "capital"})
+    marketing_spend = resolve({"marketing spend", "marketing cost", "advertising spend", "ad spend"})
     leads = resolve({"lead", "leads"})
     conversions = resolve({"conversion", "conversions", "converted", "orders"})
 
     intent = None
-    if "return on investment" in q or re.search(r"\broi\b", q):
-        intent = "roi"
-        required = (revenue, cost)
-        expression = f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0 / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0)" if all(required) else None
-        label = "ROI"
-        suffix = "%"
+    expression = None
+    required = ()
+    label = ""
+    suffix = ""
+
+    marketing_roi = (
+        ("roi" in q or "return on investment" in q)
+        and any(term in q for term in ("marketing", "advertising", "ad spend"))
+    )
+
+    if "return on investment" in q or re.search(r"\\broi\\b", q):
+        intent = "marketing_roi" if marketing_roi else "roi"
+        denominator = marketing_spend if marketing_roi else cost
+        required = (denominator, profit or revenue)
+        if all(required):
+            numerator = (
+                f"SUM(TRY_CAST({_q(profit)} AS DOUBLE))"
+                if profit else
+                f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(denominator)} AS DOUBLE)))"
+            )
+            expression = f"{numerator} * 100.0 / NULLIF(SUM(TRY_CAST({_q(denominator)} AS DOUBLE)), 0)"
+        label, suffix = ("Marketing ROI" if marketing_roi else "ROI"), "%"
     elif "profit margin" in q:
         intent = "profit_margin"
-        required = (revenue, cost)
-        expression = f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0 / NULLIF(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)), 0)" if all(required) else None
+        required = (revenue, profit or cost)
+        if all(required):
+            numerator = (
+                f"SUM(TRY_CAST({_q(profit)} AS DOUBLE))"
+                if profit else
+                f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE)))"
+            )
+            expression = f"{numerator} * 100.0 / NULLIF(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)), 0)"
         label, suffix = "Profit margin", "%"
     elif "conversion rate" in q or "lead conversion" in q:
         intent = "conversion_rate"
         required = (conversions, leads)
-        expression = f"SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) * 100.0 / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
+        if all(required):
+            expression = f"SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) * 100.0 / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)"
         label, suffix = "Conversion rate", "%"
-    elif "cost per lead" in q or re.search(r"\bcpl\b", q):
+    elif "cost per lead" in q or re.search(r"\\bcpl\\b", q):
         intent = "cost_per_lead"
-        required = (cost, leads)
-        expression = f"SUM(TRY_CAST({_q(cost)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
+        lead_cost = cost or marketing_spend
+        required = (lead_cost, leads)
+        if all(required):
+            expression = f"SUM(TRY_CAST({_q(lead_cost)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)"
         label, suffix = "Cost per lead", ""
     elif "revenue per conversion" in q:
         intent = "revenue_per_conversion"
         required = (revenue, conversions)
-        expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(conversions)} AS DOUBLE)), 0)" if all(required) else None
+        if all(required):
+            expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(conversions)} AS DOUBLE)), 0)"
         label, suffix = "Revenue per conversion", ""
     elif "profit" in q:
         intent = "profit"
-        required = (revenue, cost)
-        expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))" if all(required) else None
+        required = (profit or revenue, profit or cost)
+        if profit:
+            expression = f"SUM(TRY_CAST({_q(profit)} AS DOUBLE))"
+        elif revenue and cost:
+            expression = f"SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))"
         label, suffix = "Profit", ""
     else:
         return None
 
     if not expression:
-        available = [name for name, col in (("revenue/sales", revenue), ("cost/spend", cost), ("leads", leads), ("conversions", conversions)) if col]
+        available = [
+            name for name, col in (
+                ("revenue/sales", revenue), ("recorded profit", profit),
+                ("total cost/investment", cost), ("marketing spend", marketing_spend),
+                ("leads", leads), ("conversions", conversions),
+            ) if col
+        ]
+        if intent in ("roi", "marketing_roi"):
+            missing_label = "marketing spend" if marketing_roi else "a total cost or investment field"
+            reason = f"ROI requires recorded profit (or revenue and {missing_label}) plus {missing_label}."
+        else:
+            reason = f"I can't calculate {label.lower()} reliably because its required source columns are missing or ambiguous."
         return _base_result(
             question, "unsupported_metric",
-            f"I can't calculate {label.lower()} reliably because the required source columns are missing or ambiguous. Matched columns: {', '.join(available) if available else 'none'}.",
+            f"{reason} Matched columns: {', '.join(available) if available else 'none'}.",
             "", [], [], {"type": "table", "title": "Required source columns"},
         )
 
@@ -3572,13 +3618,17 @@ def _try_derived_metric_query(
         answer = f"{label} by {_readable(group)}: {summary}."
     else:
         answer = f"{label}: {fmt(rows[0].get('value'))}."
-
+    visualization = {
+        "type": "bar" if group else "metric",
+        "x": group or "",
+        "y": "value",
+        "title": f"{label} by {_readable(group)}" if group else label,
+        "suffix": suffix,
+    }
     return _base_result(
         question, "derived_metric", answer, sql, result_columns, rows,
-        {"type": "bar" if group else "metric", "x": group or "", "y": "value", "title": f"{label} by {_readable(group)}" if group else label},
-        metric_name=intent,
+        visualization, metric_name=intent,
     )
-
 
 def _try_anomaly_query(
     dataset: Dataset,
