@@ -2319,7 +2319,7 @@ def _try_grouped_query(
     # even when the dimension phrase is not expressed with "by/per/across".
     if group is None:
         dimension_match = re.search(
-            r"\\b(?:distribution\\s+of|breakdown\\s+of|which|what)\\s+(?:the\\s+)?(.+?)(?:\\s+(?:has|have|contributes|contains|shows)\\b|[?.!,]|$)",
+            r"\b(?:distribution\s+of|breakdown\s+of|which|what)\s+(?:the\s+)?(.+?)(?:\s+(?:has|have|contributes|contains|shows)\b|[?.!,]|$)",
             q,
             re.IGNORECASE,
         )
