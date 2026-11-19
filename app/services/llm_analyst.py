@@ -3269,7 +3269,7 @@ def _try_derived_metric_query(
     conversions = resolve({"conversion", "conversions", "converted", "orders"})
 
     intent = None
-    if "return on investment" in q or re.search(r"\\broi\\b", q):
+    if "return on investment" in q or re.search(r"\broi\b", q):
         intent = "roi"
         required = (revenue, cost)
         expression = f"(SUM(TRY_CAST({_q(revenue)} AS DOUBLE)) - SUM(TRY_CAST({_q(cost)} AS DOUBLE))) * 100.0 / NULLIF(SUM(TRY_CAST({_q(cost)} AS DOUBLE)), 0)" if all(required) else None
@@ -3285,7 +3285,7 @@ def _try_derived_metric_query(
         required = (conversions, leads)
         expression = f"SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) * 100.0 / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
         label, suffix = "Conversion rate", "%"
-    elif "cost per lead" in q or re.search(r"\\bcpl\\b", q):
+    elif "cost per lead" in q or re.search(r"\bcpl\b", q):
         intent = "cost_per_lead"
         required = (cost, leads)
         expression = f"SUM(TRY_CAST({_q(cost)} AS DOUBLE)) / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)" if all(required) else None
