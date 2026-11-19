@@ -1,6 +1,7 @@
 ﻿import os
 import re
 import time
+import math
 from typing import Any
 
 from dotenv import load_dotenv
@@ -635,6 +636,8 @@ def _detect_group_column(
     # 1. Explicit grouping phrases
     # ------------------------------------------------------------
     patterns = [
+        r"\bdistribution\s+of\s+(.+?)(?:[?.!,]|$)",
+        r"\bbreakdown\s+by\s+(.+?)(?:[?.!,]|$)",
         r"\bby\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
         r"\bfor each\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
         r"\beach\s+(.+?)(?:\s+(?:with|where|having|for|from|that|who|and)\b|[?.!,]|$)",
@@ -2311,6 +2314,85 @@ def _try_grouped_query(
         columns,
     )
 
+    # Explicit fallback for concise Quick Insight wording. This covers
+    # "distribution of <dimension>" and "which <dimension> has most records"
+    # even when the dimension phrase is not expressed with "by/per/across".
+    if group is None:
+        dimension_match = re.search(
+            r"\b(?:distribution\s+of|breakdown\s+of|which|what)\s+(?:the\s+)?(.+?)(?:\s+(?:has|have|contributes|contains|shows)\b|[?.!,]|$)",
+            q,
+            re.IGNORECASE,
+        )
+        if dimension_match:
+            candidate = dimension_match.group(1).strip()
+            group = _resolve_column(candidate, columns)
+            if group is None and candidate.endswith("s"):
+                group = _resolve_column(candidate[:-1], columns)
+
+    if group is None:
+        mentioned_dimensions = [
+            column for column in _find_mentioned_columns(q, columns)
+            if column not in numeric
+        ]
+        if len(mentioned_dimensions) == 1:
+            group = mentioned_dimensions[0]
+
+    quick_count_intent = any(
+        phrase in q
+        for phrase in (
+            "distribution",
+            "most records",
+            "fewest records",
+            "least records",
+            "most frequent",
+            "frequency",
+        )
+    )
+    if group and quick_count_intent:
+        count_order = (
+            "ASC" if any(phrase in q for phrase in ("fewest records", "least records"))
+            else "DESC"
+        )
+        count_limit = (
+            "LIMIT 1"
+            if any(phrase in q for phrase in ("most records", "fewest records", "least records"))
+            else ""
+        )
+        sql = f"""
+            SELECT {_q(group)} AS {_q(group)}, COUNT(*) AS count
+            FROM main_table
+            WHERE {_q(group)} IS NOT NULL
+            GROUP BY {_q(group)}
+            ORDER BY count {count_order}, {_q(group)} ASC
+            {count_limit}
+        """
+        result_columns, rows = _execute(dataset, sql)
+        if rows:
+            if count_limit:
+                row = rows[0]
+                answer = (
+                    f"{row[group]} has the {'fewest' if count_order == 'ASC' else 'most'} "
+                    f"records ({int(row['count']):,})."
+                )
+            else:
+                answer = (
+                    f"Record distribution by {_readable(group)}: "
+                    + "; ".join(
+                        f"{row[group]}: {int(row['count']):,}" for row in rows
+                    )
+                    + "."
+                )
+            return _base_result(
+                question,
+                "local_grouped_analysis",
+                answer,
+                sql,
+                result_columns,
+                rows,
+                {"type": "bar", "x": group, "y": "count",
+                 "title": f"Record distribution by {_readable(group).title()}"},
+            )
+
     # Ranking questions frequently use:
     # "Which Department has the highest average CGPA?"
     # There is no "by Department" phrase, so infer the grouping
@@ -2346,6 +2428,12 @@ def _try_grouped_query(
         return None
 
     aggregation = _detect_aggregation(q)
+    # In grouped rankings, "highest total revenue" means the group with
+    # the largest SUM(revenue), not MAX(revenue) within each group.
+    if re.search(r"\b(?:highest|largest|most)\s+total\b", q):
+        aggregation = "SUM"
+    elif re.search(r"\b(?:highest|largest|most)\s+average\b", q):
+        aggregation = "AVG"
     # ------------------------------------------------------------
     # Multi-column aggregation
     # ------------------------------------------------------------
@@ -2506,6 +2594,12 @@ def _try_grouped_query(
                 "how many",
                 "number of",
                 "count",
+                "distribution",
+                "most records",
+                "fewest records",
+                "least records",
+                "most frequent",
+                "frequency",
             )
         )
     )
@@ -2684,6 +2778,13 @@ def _try_grouped_query(
     # Grouped row counts
     # ------------------------------------------------------------
     if count_mode and not metric:
+        count_order = (
+            "ASC" if any(phrase in q for phrase in ("fewest records", "least records"))
+            else "DESC"
+        )
+        count_limit = "LIMIT 1" if (
+            "most records" in q or "fewest records" in q or "least records" in q
+        ) else ""
         sql = f"""
             SELECT
                 {_q(group)} AS {_q(group)},
@@ -2691,7 +2792,8 @@ def _try_grouped_query(
             FROM main_table
             WHERE {_q(group)} IS NOT NULL
             GROUP BY {_q(group)}
-            ORDER BY count DESC
+            ORDER BY count {count_order}
+            {count_limit}
         """
 
         result_columns, rows = _execute(
@@ -2964,6 +3066,8 @@ def _try_statistical_query(
             "standard deviation",
             "std",
             "variance",
+            "correlation",
+            "correlate",
             "statistics",
             "statistical summary",
             "quartile",
@@ -2974,6 +3078,67 @@ def _try_statistical_query(
 
     columns = _columns(dataset)
     numeric = _numeric_columns(dataset)
+
+    if "correlation" in q or "correlate" in q:
+        if len(numeric) < 2:
+            return _base_result(
+                question,
+                "unsupported_metric",
+                "A correlation analysis needs at least two numeric columns. "
+                f"This dataset has {len(numeric)} numeric column(s).",
+                "",
+                [],
+                [],
+            )
+
+        pairs = [
+            (left, right)
+            for index, left in enumerate(numeric)
+            for right in numeric[index + 1:]
+        ]
+        selects = [
+            (
+                "SELECT "
+                f"'{_readable(left).replace(chr(39), chr(39) * 2)}' AS column_x, "
+                f"'{_readable(right).replace(chr(39), chr(39) * 2)}' AS column_y, "
+                f"corr(TRY_CAST({_q(left)} AS DOUBLE), "
+                f"TRY_CAST({_q(right)} AS DOUBLE)) AS correlation "
+                "FROM main_table"
+            )
+            for left, right in pairs
+        ]
+        sql = " UNION ALL ".join(selects)
+        result_columns, rows = _execute(dataset, sql)
+        lines = []
+        for row in rows:
+            value = _safe_float(row.get("correlation"))
+            strength = (
+                "strong" if value is not None and abs(value) >= 0.7
+                else "moderate" if value is not None and abs(value) >= 0.4
+                else "weak" if value is not None
+                else "unavailable"
+            )
+            lines.append(
+                f"{row.get('column_x')} vs {row.get('column_y')}: "
+                f"{value:.3f} ({strength} correlation)"
+                if value is not None
+                else f"{row.get('column_x')} vs {row.get('column_y')}: unavailable"
+            )
+        answer = (
+            "Pairwise Pearson correlations across numeric columns: "
+            + "; ".join(lines)
+            + ". Correlation indicates association, not causation."
+        )
+        return _base_result(
+            question,
+            "correlation_analysis",
+            answer,
+            sql,
+            result_columns,
+            rows,
+            {"type": "table", "x": "column_x", "y": "correlation",
+             "title": "Numeric column correlations"},
+        )
 
     mentioned = [
         column
@@ -3914,51 +4079,26 @@ def _try_contextual_followup(
     question: str,
     conversation_history: list[dict] | None = None,
 ) -> dict | None:
-    """
-    Lightweight follow-up handling.
-
-    It only reuses an explicitly supplied previous result. Questions
-    that need fresh interpretation fall through to the generic engine.
-    """
-    history = _normalize_conversation_history(
-        conversation_history
-    )
-
+    """Explain the most recent assistant result using its actual rows and metadata."""
+    history = _normalize_conversation_history(conversation_history)
     if not history:
         return None
 
     q = _norm(question)
-
-    if not any(
-        marker in q
-        for marker in (
-            "why",
-            "explain",
-            "what does that",
-            "what about",
-            "and what",
-            "how about",
-            "tell me more",
-        )
-    ):
+    if not any(marker in q for marker in (
+        "why", "explain", "what does that", "what about", "and what",
+        "how about", "tell me more", "summarize", "interpret",
+    )):
         return None
 
     previous = next(
-        (
-            item
-            for item in reversed(history)
-            if item.get("role") == "assistant"
-        ),
+        (item for item in reversed(history) if item.get("role") == "assistant"),
         None,
     )
-
     if not previous:
         return None
 
     previous_result = previous.get("result")
-
-    # The React client sends the previous result as top-level fields
-    # (rows/sql/visualization/resultType), not as a nested "result" object.
     if not isinstance(previous_result, dict):
         previous_result = {
             "answer": previous.get("text", ""),
@@ -3969,39 +4109,176 @@ def _try_contextual_followup(
             "type": previous.get("resultType") or previous.get("type"),
         }
 
-    if not isinstance(previous_result.get("rows", []), list):
+    rows = previous_result.get("rows", [])
+    if not isinstance(rows, list):
         return None
+    rows = [row for row in rows if isinstance(row, dict)]
+    prior_answer = str(previous_result.get("answer") or "").strip()
+    visualization = previous_result.get("visualization") or {}
+    sql = str(previous_result.get("sql") or "")
 
-    answer = (
-        "Based on the previous analysis: "
-        + str(
-            previous_result.get(
-                "answer",
-                "",
+    def numeric_value(value):
+        try:
+            number = float(value)
+            return number if math.isfinite(number) else None
+        except (TypeError, ValueError):
+            return None
+
+    explanation_parts = []
+    x_key = visualization.get("x") if isinstance(visualization, dict) else None
+    y_key = visualization.get("y") if isinstance(visualization, dict) else None
+
+    if rows:
+        keys = list(rows[0].keys())
+        if not x_key:
+            x_key = next((key for key in keys if numeric_value(rows[0].get(key)) is None), None)
+        if not y_key or y_key not in rows[0]:
+            y_key = next((key for key in keys if key != x_key and numeric_value(rows[0].get(key)) is not None), None)
+
+        if x_key and y_key and y_key in rows[0]:
+            ranked = [
+                (row.get(x_key), numeric_value(row.get(y_key)))
+                for row in rows
+                if numeric_value(row.get(y_key)) is not None
+            ]
+            if ranked:
+                ranked.sort(key=lambda item: item[1], reverse=True)
+                total = sum(value for _, value in ranked)
+                top_label, top_value = ranked[0]
+                explanation_parts.append(
+                    f"The strongest group is {top_label}, with {top_value:,.2f} "
+                    f"for { _readable(y_key) }."
+                )
+                if len(ranked) > 1:
+                    low_label, low_value = ranked[-1]
+                    explanation_parts.append(
+                        f"The lowest group is {low_label} at {low_value:,.2f}."
+                    )
+                if total > 0:
+                    share = top_value * 100.0 / total
+                    explanation_parts.append(
+                        f"The leading group represents {share:.1f}% of the displayed group total."
+                    )
+                aggregation_label = "summed" if re.search(r"\bSUM\s*\(", sql, re.I) else (
+                    "averaged" if re.search(r"\bAVG\s*\(", sql, re.I) else "compared"
+                )
+                explanation_parts.append(
+                    f"The analysis {aggregation_label} { _readable(y_key) } "
+                    f"across { _readable(x_key) } groups."
+                )
+        elif len(rows) == 1:
+            values = [
+                f"{_readable(key)} = {value:,.2f}"
+                for key, raw in rows[0].items()
+                if (value := numeric_value(raw)) is not None
+            ]
+            if values:
+                explanation_parts.append(
+                    "The result is a dataset-wide metric: " + ", ".join(values[:5]) + "."
+                )
+                if re.search(r"\bSUM\s*\(", sql, re.I):
+                    explanation_parts.append("It is calculated by adding the qualifying values across the dataset.")
+                elif re.search(r"\bAVG\s*\(", sql, re.I):
+                    explanation_parts.append("It is calculated as the arithmetic average of the qualifying values.")
+        else:
+            explanation_parts.append(
+                f"The previous query returned {len(rows):,} rows. "
+                f"The first result contains: {', '.join(keys[:6])}."
             )
-        )
-    )
 
+    if prior_answer:
+        explanation_parts.insert(0, f"The previous analysis found: {prior_answer}")
+    if not explanation_parts:
+        explanation_parts.append(
+            "I can see the previous question, but it did not include structured result rows to explain. "
+            "Please rerun that analysis so I can explain its figures."
+        )
+
+    answer = " ".join(explanation_parts)
     return _base_result(
         question,
         "contextual_followup",
         answer,
-        previous_result.get(
-            "sql",
-            "",
-        ),
-        previous_result.get(
-            "columns",
-            [],
-        ),
-        previous_result.get(
-            "rows",
-            [],
-        ),
-        previous_result.get(
-            "visualization",
-        ),
+        sql,
+        previous_result.get("columns") or (list(rows[0].keys()) if rows else []),
+        rows,
+        visualization if isinstance(visualization, dict) else None,
+        explained_result_type=previous_result.get("type"),
     )
+
+
+def _try_contextual_dimension_ranking(
+    dataset: Dataset,
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> dict | None:
+    """Resolve generic 'which category contributes most?' from the prior chart."""
+    q = _norm(question)
+    if not (
+        ("which " in q or "what " in q)
+        and any(phrase in q for phrase in (
+            "contributes most", "contributes the most", "largest contribution",
+            "highest contribution", "biggest contribution",
+        ))
+    ):
+        return None
+
+    history = _normalize_conversation_history(conversation_history)
+    previous = next(
+        (item for item in reversed(history) if item.get("role") == "assistant"),
+        None,
+    )
+    if not previous:
+        return None
+
+    visualization = previous.get("visualization") or {}
+    group = visualization.get("x") if isinstance(visualization, dict) else None
+    if not group or group not in _columns(dataset):
+        return None
+
+    numeric = _numeric_columns(dataset)
+    columns = _columns(dataset)
+    y_key = visualization.get("y") if isinstance(visualization, dict) else None
+
+    previous_user = next(
+        (item for item in reversed(history) if item.get("role") == "user"),
+        None,
+    )
+    metric = None
+    if previous_user:
+        metric = _detect_metric_column(previous_user.get("text", ""), columns, numeric)
+    if metric is None and y_key in numeric:
+        metric = y_key
+    if metric is None:
+        title = visualization.get("title", "") if isinstance(visualization, dict) else ""
+        metric = _detect_metric_column(title, columns, numeric)
+    if metric is None:
+        # Only infer a business metric when revenue/sales is unambiguous.
+        revenue_candidates = [
+            column for column in numeric
+            if _norm(column) in {"revenue", "sales", "turnover", "income"}
+        ]
+        if len(revenue_candidates) == 1:
+            metric = revenue_candidates[0]
+
+    if metric is None:
+        return None
+
+    synthetic_question = (
+        f"Which {_readable(group)} has the highest total {_readable(metric)}?"
+    )
+    result = _try_grouped_query(dataset, synthetic_question)
+    if result is None:
+        return None
+
+    result["question"] = question
+    result["type"] = "contextual_followup"
+    result["followup_for"] = previous.get("text", "")
+    result["answer"] = (
+        f"Based on the previous chart, I ranked {_readable(group)} by total "
+        f"{_readable(metric)}. " + result.get("answer", "")
+    )
+    return result
 
 
 # ============================================================================

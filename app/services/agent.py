@@ -325,6 +325,25 @@ class AnalystAgent:
                 )
             ]
 
+        # A categorical distribution is a grouped row-count analysis.
+        # Resolve its dimension before the generic statistics route.
+        if "distribution" in q or "breakdown by" in q:
+            try:
+                from app.services.llm_analyst import _detect_group_column
+
+                dataset_columns = getattr(self.dataset, "columns", None)
+                if dataset_columns is None:
+                    dataset_columns = list(self.dataset.df.columns)
+                if _detect_group_column(q, list(dataset_columns)):
+                    return [
+                        AgentStep(
+                            "grouped_analysis",
+                            "Show the record distribution across the requested category",
+                        )
+                    ]
+            except Exception:
+                pass
+
         # 7. Statistics / correlation / distribution.
         if self._contains_any(
             q,
@@ -1014,6 +1033,40 @@ class AnalystAgent:
                         repr(exc),
                     )
                     result = None
+
+        # ----------------------------------------------------
+        # Chart-aware contextual ranking.
+        # Generic wording such as "Which category contributes most?"
+        # must reuse the actual dimension and metric from the prior chart.
+        # ----------------------------------------------------
+        if result is None and conversation_history:
+            try:
+                contextual_ranker = getattr(
+                    self.llm,
+                    "_try_contextual_dimension_ranking",
+                    None,
+                )
+                if contextual_ranker is not None:
+                    contextual_result = contextual_ranker(
+                        self.dataset,
+                        question,
+                        conversation_history,
+                    )
+                    if contextual_result is not None:
+                        result = contextual_result
+                        steps = [
+                            AgentStep(
+                                "contextual_followup",
+                                "Rank the previous chart's actual dimension by its metric",
+                                status="success",
+                                duration_ms=round(
+                                    (time.perf_counter() - started) * 1000,
+                                    2,
+                                ),
+                            )
+                        ]
+            except Exception as exc:
+                print("Chart-aware follow-up failed:", repr(exc))
 
         # ----------------------------------------------------
         # Last-resort local contextual response.

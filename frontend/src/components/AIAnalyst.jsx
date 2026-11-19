@@ -756,6 +756,10 @@ function buildConversationHistory(messages) {
       role: message.role,
       text: message.text || "",
       rows: Array.isArray(message.rows) ? message.rows : [],
+      chartRows: Array.isArray(message.chartRows) ? message.chartRows : [],
+      columns: Array.isArray(message.columns) ? message.columns : [],
+      question: message.question || "",
+      followUps: Array.isArray(message.followUps) ? message.followUps : [],
       visualization:
         message.visualization &&
         typeof message.visualization === "object"
@@ -869,9 +873,10 @@ function makeFollowUps(message) {
   const visualization = message.visualization;
 
   if (visualization?.type === "bar") {
+    const dimension = visualization.x || "group";
     return [
       "Explain the main difference in these results",
-      "Which category contributes the most?",
+      `Which ${dimension} contributes the most?`,
     ];
   }
 
@@ -1033,6 +1038,8 @@ useEffect(() => {
           result?.answer ||
           "No answer was returned.",
         rows: resultRows,
+        chartRows: Array.isArray(result?.chart_rows) ? result.chart_rows : resultRows,
+        columns: Array.isArray(result?.columns) ? result.columns : [],
         visualization: resultVisualization,
         sql:
           typeof result?.sql === "string"
@@ -1124,6 +1131,8 @@ useEffect(() => {
         visualization: result?.visualization || null,
         resultType: result?.type || result?.resultType || null,
         model: result?.model || "",
+        question: trimmed,
+        agent: result?.agent || null,
         followUps: Array.isArray(result?.follow_ups)
           ? result.follow_ups
           : [],
@@ -1246,6 +1255,7 @@ useEffect(() => {
             isUniqueValuesQuestion(message);
           const metricResult =
             message.role === "assistant" &&
+            message.resultType !== "contextual_followup" &&
             isMetricVisualization(message.visualization);
           const executiveSummary =
             message.role === "assistant" &&
