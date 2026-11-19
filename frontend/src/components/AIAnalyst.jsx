@@ -491,20 +491,25 @@ function NumericRangeCards({ rows, visualization }) {
         width: "100%",
       }}
     >
-      <div className="ai-metric-card">
-        <div className="ai-metric-label">Minimum</div>
-        <div className="ai-metric-value">{formatNumber(minimum)}</div>
-      </div>
-      <div className="ai-metric-card">
-        <div className="ai-metric-label">Maximum</div>
-        <div className="ai-metric-value">{formatNumber(maximum)}</div>
-      </div>
-      {count !== undefined && (
-        <div className="ai-metric-card">
-          <div className="ai-metric-label">Valid numeric records</div>
-          <div className="ai-metric-value">{formatNumber(count)}</div>
+      {[["Minimum", minimum], ["Maximum", maximum], ...(count !== undefined ? [["Valid numeric records", count]] : [])].map(([label, value]) => (
+        <div
+          key={label}
+          className="ai-metric-card"
+          style={{
+            padding: "20px 22px",
+            borderRadius: 18,
+            border: "1px solid rgba(102, 217, 168, 0.24)",
+            background: "linear-gradient(145deg, rgba(20,45,55,.96), rgba(10,27,38,.96))",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9db3c9", marginBottom: 8 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 30, lineHeight: 1.15, fontWeight: 850, color: "#66d9a8", wordBreak: "break-word" }}>
+            {formatNumber(value)}
+          </div>
         </div>
-      )}
+      ))}
     </section>
   );
 }
