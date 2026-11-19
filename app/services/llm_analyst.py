@@ -2982,6 +2982,67 @@ def _try_statistical_query(
     columns = _columns(dataset)
     numeric = _numeric_columns(dataset)
 
+    if "correlation" in q or "correlate" in q:
+        if len(numeric) < 2:
+            return _base_result(
+                question,
+                "unsupported_metric",
+                "A correlation analysis needs at least two numeric columns. "
+                f"This dataset has {len(numeric)} numeric column(s).",
+                "",
+                [],
+                [],
+            )
+
+        pairs = [
+            (left, right)
+            for index, left in enumerate(numeric)
+            for right in numeric[index + 1:]
+        ]
+        selects = [
+            (
+                "SELECT "
+                f"'{_readable(left).replace(chr(39), chr(39) * 2)}' AS column_x, "
+                f"'{_readable(right).replace(chr(39), chr(39) * 2)}' AS column_y, "
+                f"corr(TRY_CAST({_q(left)} AS DOUBLE), "
+                f"TRY_CAST({_q(right)} AS DOUBLE)) AS correlation "
+                "FROM main_table"
+            )
+            for left, right in pairs
+        ]
+        sql = " UNION ALL ".join(selects)
+        result_columns, rows = _execute(dataset, sql)
+        lines = []
+        for row in rows:
+            value = _safe_float(row.get("correlation"))
+            strength = (
+                "strong" if value is not None and abs(value) >= 0.7
+                else "moderate" if value is not None and abs(value) >= 0.4
+                else "weak" if value is not None
+                else "unavailable"
+            )
+            lines.append(
+                f"{row.get('column_x')} vs {row.get('column_y')}: "
+                f"{value:.3f} ({strength} correlation)"
+                if value is not None
+                else f"{row.get('column_x')} vs {row.get('column_y')}: unavailable"
+            )
+        answer = (
+            "Pairwise Pearson correlations across numeric columns: "
+            + "; ".join(lines)
+            + ". Correlation indicates association, not causation."
+        )
+        return _base_result(
+            question,
+            "correlation_analysis",
+            answer,
+            sql,
+            result_columns,
+            rows,
+            {"type": "table", "x": "column_x", "y": "correlation",
+             "title": "Numeric column correlations"},
+        )
+
     mentioned = [
         column
         for column in _find_mentioned_columns(
