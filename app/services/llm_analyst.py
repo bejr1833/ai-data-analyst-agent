@@ -1,6 +1,7 @@
 ﻿import os
 import re
 import time
+import math
 from typing import Any
 
 from dotenv import load_dotenv
@@ -4040,6 +4041,80 @@ def _try_contextual_followup(
         visualization if isinstance(visualization, dict) else None,
         explained_result_type=previous_result.get("type"),
     )
+
+
+def _try_contextual_dimension_ranking(
+    dataset: Dataset,
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> dict | None:
+    """Resolve generic 'which category contributes most?' from the prior chart."""
+    q = _norm(question)
+    if not (
+        ("which " in q or "what " in q)
+        and any(phrase in q for phrase in (
+            "contributes most", "contributes the most", "largest contribution",
+            "highest contribution", "biggest contribution",
+        ))
+    ):
+        return None
+
+    history = _normalize_conversation_history(conversation_history)
+    previous = next(
+        (item for item in reversed(history) if item.get("role") == "assistant"),
+        None,
+    )
+    if not previous:
+        return None
+
+    visualization = previous.get("visualization") or {}
+    group = visualization.get("x") if isinstance(visualization, dict) else None
+    if not group or group not in _columns(dataset):
+        return None
+
+    numeric = _numeric_columns(dataset)
+    columns = _columns(dataset)
+    y_key = visualization.get("y") if isinstance(visualization, dict) else None
+
+    previous_user = next(
+        (item for item in reversed(history) if item.get("role") == "user"),
+        None,
+    )
+    metric = None
+    if previous_user:
+        metric = _detect_metric_column(previous_user.get("text", ""), columns, numeric)
+    if metric is None and y_key in numeric:
+        metric = y_key
+    if metric is None:
+        title = visualization.get("title", "") if isinstance(visualization, dict) else ""
+        metric = _detect_metric_column(title, columns, numeric)
+    if metric is None:
+        # Only infer a business metric when revenue/sales is unambiguous.
+        revenue_candidates = [
+            column for column in numeric
+            if _norm(column) in {"revenue", "sales", "turnover", "income"}
+        ]
+        if len(revenue_candidates) == 1:
+            metric = revenue_candidates[0]
+
+    if metric is None:
+        return None
+
+    synthetic_question = (
+        f"Which {_readable(group)} has the highest total {_readable(metric)}?"
+    )
+    result = _try_grouped_query(dataset, synthetic_question)
+    if result is None:
+        return None
+
+    result["question"] = question
+    result["type"] = "contextual_followup"
+    result["followup_for"] = previous.get("text", "")
+    result["answer"] = (
+        f"Based on the previous chart, I ranked {_readable(group)} by total "
+        f"{_readable(metric)}. " + result.get("answer", "")
+    )
+    return result
 
 
 # ============================================================================
