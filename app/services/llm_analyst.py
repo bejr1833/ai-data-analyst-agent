@@ -2314,6 +2314,21 @@ def _try_grouped_query(
         columns,
     )
 
+    # Explicit fallback for concise Quick Insight wording. This covers
+    # "distribution of <dimension>" and "which <dimension> has most records"
+    # even when the dimension phrase is not expressed with "by/per/across".
+    if group is None:
+        dimension_match = re.search(
+            r"\\b(?:distribution\\s+of|breakdown\\s+of|which|what)\\s+(?:the\\s+)?(.+?)(?:\\s+(?:has|have|contributes|contains|shows)\\b|[?.!,]|$)",
+            q,
+            re.IGNORECASE,
+        )
+        if dimension_match:
+            candidate = dimension_match.group(1).strip()
+            group = _resolve_column(candidate, columns)
+            if group is None and candidate.endswith("s"):
+                group = _resolve_column(candidate[:-1], columns)
+
     # Ranking questions frequently use:
     # "Which Department has the highest average CGPA?"
     # There is no "by Department" phrase, so infer the grouping
