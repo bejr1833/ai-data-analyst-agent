@@ -870,7 +870,7 @@ def _detect_metric_column(
 
     for aliases in semantic_aliases.values():
         if not any(
-            re.search(r"(?<!\\w)" + re.escape(alias) + r"(?!\\w)", q)
+            re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", q)
             for alias in aliases
         ):
             continue
@@ -886,7 +886,7 @@ def _detect_metric_column(
     # Safe fallback only when there is exactly one numeric column.
     if len(numeric) == 1 and any(
         re.search(
-            r"(?<!\\w)" + re.escape(marker) + r"(?!\\w)",
+            r"(?<!\w)" + re.escape(marker) + r"(?!\w)",
             q,
         )
         for marker in (
@@ -1251,9 +1251,9 @@ def _try_local_query(
                             normalized_name = _norm(name)
 
                             match = re.search(
-                                r"(?<!\\w)"
+                                r"(?<!\w)"
                                 + re.escape(normalized_name)
-                                + r"(?!\\w)",
+                                + r"(?!\w)",
                                 q,
                                 re.IGNORECASE,
                             )
