@@ -49,6 +49,7 @@ class SalesDatasetRegressionTests(unittest.TestCase):
         self.assertIn("1,140,400.00", answer)
         self.assertIn("506.62%", answer)
         self.assertIn("South", answer)
+        self.assertIn("Diwali Mega Sale", answer)
         self.assertIn("Festive Email Push", answer)
         self.assertNotIn("summary of the numeric columns", answer.lower())
 
