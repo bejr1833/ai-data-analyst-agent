@@ -3528,7 +3528,7 @@ def _try_derived_metric_query(
         and any(term in q for term in ("marketing", "advertising", "ad spend"))
     )
 
-    if "return on investment" in q or re.search(r"\\broi\\b", q):
+    if "return on investment" in q or re.search(r"\broi\b", q):
         intent = "marketing_roi" if marketing_roi else "roi"
         denominator = marketing_spend if marketing_roi else cost
         required = (denominator, profit or revenue)
@@ -3557,7 +3557,7 @@ def _try_derived_metric_query(
         if all(required):
             expression = f"SUM(TRY_CAST({_q(conversions)} AS DOUBLE)) * 100.0 / NULLIF(SUM(TRY_CAST({_q(leads)} AS DOUBLE)), 0)"
         label, suffix = "Conversion rate", "%"
-    elif "cost per lead" in q or re.search(r"\\bcpl\\b", q):
+    elif "cost per lead" in q or re.search(r"\bcpl\b", q):
         intent = "cost_per_lead"
         lead_cost = cost or marketing_spend
         required = (lead_cost, leads)
