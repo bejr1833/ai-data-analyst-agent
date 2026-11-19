@@ -215,5 +215,29 @@ class RealSalesSchemaTests(unittest.TestCase):
         self.assertIn("not causation", result["answer"].lower())
 
 
+    def test_quick_insight_category_distribution_returns_group_counts(self):
+        agent = AnalystAgent(self.dataset)
+        self.assertEqual(
+            agent.plan("Show the distribution of region")[0].tool,
+            "grouped_analysis",
+        )
+        result = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Show the distribution of region",
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["type"], "local_grouped_analysis")
+        self.assertIn("COUNT(*)", result["sql"])
+
+    def test_quick_insight_most_records_returns_top_group(self):
+        result = llm_analyst._try_grouped_query(
+            self.dataset,
+            "Which region has the most records?",
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("LIMIT 1", result["sql"])
+        self.assertEqual(result["rows"][0]["region"], "South")
+
+
 if __name__ == "__main__":
     unittest.main()
