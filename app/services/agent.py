@@ -1016,6 +1016,40 @@ class AnalystAgent:
                     result = None
 
         # ----------------------------------------------------
+        # Chart-aware contextual ranking.
+        # Generic wording such as "Which category contributes most?"
+        # must reuse the actual dimension and metric from the prior chart.
+        # ----------------------------------------------------
+        if result is None and conversation_history:
+            try:
+                contextual_ranker = getattr(
+                    self.llm,
+                    "_try_contextual_dimension_ranking",
+                    None,
+                )
+                if contextual_ranker is not None:
+                    contextual_result = contextual_ranker(
+                        self.dataset,
+                        question,
+                        conversation_history,
+                    )
+                    if contextual_result is not None:
+                        result = contextual_result
+                        steps = [
+                            AgentStep(
+                                "contextual_followup",
+                                "Rank the previous chart's actual dimension by its metric",
+                                status="success",
+                                duration_ms=round(
+                                    (time.perf_counter() - started) * 1000,
+                                    2,
+                                ),
+                            )
+                        ]
+            except Exception as exc:
+                print("Chart-aware follow-up failed:", repr(exc))
+
+        # ----------------------------------------------------
         # Last-resort local contextual response.
         #
         # This is deliberately before the normal tool loop and
