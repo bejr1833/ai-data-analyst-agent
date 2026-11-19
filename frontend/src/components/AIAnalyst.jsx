@@ -473,6 +473,47 @@ function MetricCard({ rows, visualization }) {
     </div>
   );
 }
+function NumericRangeCards({ rows, visualization }) {
+  const result = rows?.[0] || {};
+  const minimum = result.minimum;
+  const maximum = result.maximum;
+  const count = result.count;
+  const title = visualization?.title || "Value range";
+
+  return (
+    <section
+      aria-label={title}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+        gap: 12,
+        marginTop: 18,
+        width: "100%",
+      }}
+    >
+      {[["Minimum", minimum], ["Maximum", maximum], ...(count !== undefined ? [["Valid numeric records", count]] : [])].map(([label, value]) => (
+        <div
+          key={label}
+          className="ai-metric-card"
+          style={{
+            padding: "20px 22px",
+            borderRadius: 18,
+            border: "1px solid rgba(102, 217, 168, 0.24)",
+            background: "linear-gradient(145deg, rgba(20,45,55,.96), rgba(10,27,38,.96))",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9db3c9", marginBottom: 8 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 30, lineHeight: 1.15, fontWeight: 850, color: "#66d9a8", wordBreak: "break-word" }}>
+            {formatNumber(value)}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function ExecutiveSummary({ rows, visualization }) {
   const summary = rows?.[0];
 
@@ -1253,9 +1294,13 @@ useEffect(() => {
           const uniqueValuesQuestion =
             message.role === "assistant" &&
             isUniqueValuesQuestion(message);
+          const numericRangeResult =
+            message.role === "assistant" &&
+            message.resultType === "numeric_range";
           const metricResult =
             message.role === "assistant" &&
             message.resultType !== "contextual_followup" &&
+            !numericRangeResult &&
             isMetricVisualization(message.visualization);
           const executiveSummary =
             message.role === "assistant" &&
@@ -1284,7 +1329,7 @@ useEffect(() => {
                   : undefined
               }
             >
-              {!(message.role === "assistant" && metricResult && !executiveSummary) && (
+              {!(message.role === "assistant" && (metricResult || numericRangeResult) && !executiveSummary) && (
                 <div className="chat-message-text">
                   {cleanDisplayText(message.text)}
                 </div>
@@ -1313,6 +1358,11 @@ useEffect(() => {
                 />
               ) : executiveSummary ? (
                 <ExecutiveSummary
+                  rows={message.rows}
+                  visualization={message.visualization}
+                />
+              ) : numericRangeResult ? (
+                <NumericRangeCards
                   rows={message.rows}
                   visualization={message.visualization}
                 />

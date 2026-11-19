@@ -4017,6 +4017,93 @@ def _try_business_insight_query(
     )
 
 
+def _try_numeric_range_query(
+    dataset: Dataset,
+    question: str,
+) -> dict | None:
+    """Return both minimum and maximum when the user asks for a value range."""
+    q = _norm(question)
+    asks_min = any(word in q for word in ("minimum", "min ", "lowest", "smallest"))
+    asks_max = any(word in q for word in ("maximum", "max ", "highest", "largest"))
+    asks_range = (
+        asks_min and asks_max
+        or "range of" in q
+        or "min and max" in q
+        or "minimum and maximum" in q
+        or "lowest and highest" in q
+    )
+    if not asks_range:
+        return None
+
+    columns = _columns(dataset)
+    numeric = _numeric_columns(dataset)
+    mentioned = [
+        column for column in _find_mentioned_columns(q, columns)
+        if column in numeric
+    ]
+    if len(mentioned) > 1:
+        # Prefer the metric nearest to the word "revenue"/"sales" if the
+        # question explicitly names one; otherwise do not guess between metrics.
+        return None
+    metric = mentioned[0] if mentioned else (numeric[0] if len(numeric) == 1 else None)
+    if metric is None:
+        available = ", ".join(_readable(column) for column in numeric[:12])
+        return _base_result(
+            question,
+            "unsupported_metric",
+            "I couldn't identify one numeric field for the minimum/maximum range. "
+            f"Please name a numeric column. Available numeric fields: {available}.",
+            "",
+            [],
+            [],
+        )
+
+    sql = f"""
+        SELECT
+            COUNT(TRY_CAST({_q(metric)} AS DOUBLE)) AS count,
+            MIN(TRY_CAST({_q(metric)} AS DOUBLE)) AS minimum,
+            MAX(TRY_CAST({_q(metric)} AS DOUBLE)) AS maximum
+        FROM main_table
+    """
+    result_columns, rows = _execute(dataset, sql)
+    if not rows:
+        return None
+
+    row = rows[0]
+    minimum = _safe_float(row.get("minimum"))
+    maximum = _safe_float(row.get("maximum"))
+    count = int(row.get("count") or 0)
+    if minimum is None or maximum is None:
+        answer = (
+            f"No valid numeric values were found in {_readable(metric)}; "
+            "minimum and maximum cannot be calculated."
+        )
+    else:
+        answer = (
+            f"For {_readable(metric)}, the minimum value is {minimum:,.2f} "
+            f"and the maximum value is {maximum:,.2f}, based on {count:,} "
+            "non-null numeric records."
+        )
+
+    return _base_result(
+        question,
+        "numeric_range",
+        answer,
+        sql,
+        result_columns,
+        rows,
+        {
+            "type": "numeric_range",
+            "title": f"{_readable(metric).title()} range",
+            "x": "",
+            "y": "minimum",
+            "minimumKey": "minimum",
+            "maximumKey": "maximum",
+        },
+        metric=metric,
+    )
+
+
 def _try_numeric_query(
     dataset: Dataset,
     question: str,
@@ -4024,6 +4111,9 @@ def _try_numeric_query(
     """
     Compatibility name retained for AnalystAgent.
     """
+    range_result = _try_numeric_range_query(dataset, question)
+    if range_result is not None:
+        return range_result
     return _try_local_query(
         dataset,
         question,
