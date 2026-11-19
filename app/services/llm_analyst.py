@@ -3914,51 +3914,26 @@ def _try_contextual_followup(
     question: str,
     conversation_history: list[dict] | None = None,
 ) -> dict | None:
-    """
-    Lightweight follow-up handling.
-
-    It only reuses an explicitly supplied previous result. Questions
-    that need fresh interpretation fall through to the generic engine.
-    """
-    history = _normalize_conversation_history(
-        conversation_history
-    )
-
+    """Explain the most recent assistant result using its actual rows and metadata."""
+    history = _normalize_conversation_history(conversation_history)
     if not history:
         return None
 
     q = _norm(question)
-
-    if not any(
-        marker in q
-        for marker in (
-            "why",
-            "explain",
-            "what does that",
-            "what about",
-            "and what",
-            "how about",
-            "tell me more",
-        )
-    ):
+    if not any(marker in q for marker in (
+        "why", "explain", "what does that", "what about", "and what",
+        "how about", "tell me more", "summarize", "interpret",
+    )):
         return None
 
     previous = next(
-        (
-            item
-            for item in reversed(history)
-            if item.get("role") == "assistant"
-        ),
+        (item for item in reversed(history) if item.get("role") == "assistant"),
         None,
     )
-
     if not previous:
         return None
 
     previous_result = previous.get("result")
-
-    # The React client sends the previous result as top-level fields
-    # (rows/sql/visualization/resultType), not as a nested "result" object.
     if not isinstance(previous_result, dict):
         previous_result = {
             "answer": previous.get("text", ""),
@@ -3969,38 +3944,101 @@ def _try_contextual_followup(
             "type": previous.get("resultType") or previous.get("type"),
         }
 
-    if not isinstance(previous_result.get("rows", []), list):
+    rows = previous_result.get("rows", [])
+    if not isinstance(rows, list):
         return None
+    rows = [row for row in rows if isinstance(row, dict)]
+    prior_answer = str(previous_result.get("answer") or "").strip()
+    visualization = previous_result.get("visualization") or {}
+    sql = str(previous_result.get("sql") or "")
 
-    answer = (
-        "Based on the previous analysis: "
-        + str(
-            previous_result.get(
-                "answer",
-                "",
+    def numeric_value(value):
+        try:
+            number = float(value)
+            return number if math.isfinite(number) else None
+        except (TypeError, ValueError):
+            return None
+
+    explanation_parts = []
+    x_key = visualization.get("x") if isinstance(visualization, dict) else None
+    y_key = visualization.get("y") if isinstance(visualization, dict) else None
+
+    if rows:
+        keys = list(rows[0].keys())
+        if not x_key:
+            x_key = next((key for key in keys if numeric_value(rows[0].get(key)) is None), None)
+        if not y_key or y_key not in rows[0]:
+            y_key = next((key for key in keys if key != x_key and numeric_value(rows[0].get(key)) is not None), None)
+
+        if x_key and y_key and y_key in rows[0]:
+            ranked = [
+                (row.get(x_key), numeric_value(row.get(y_key)))
+                for row in rows
+                if numeric_value(row.get(y_key)) is not None
+            ]
+            if ranked:
+                ranked.sort(key=lambda item: item[1], reverse=True)
+                total = sum(value for _, value in ranked)
+                top_label, top_value = ranked[0]
+                explanation_parts.append(
+                    f"The strongest group is {top_label}, with {top_value:,.2f} "
+                    f"for { _readable(y_key) }."
+                )
+                if len(ranked) > 1:
+                    low_label, low_value = ranked[-1]
+                    explanation_parts.append(
+                        f"The lowest group is {low_label} at {low_value:,.2f}."
+                    )
+                if total > 0:
+                    share = top_value * 100.0 / total
+                    explanation_parts.append(
+                        f"The leading group represents {share:.1f}% of the displayed group total."
+                    )
+                aggregation_label = "summed" if re.search(r"\bSUM\s*\(", sql, re.I) else (
+                    "averaged" if re.search(r"\bAVG\s*\(", sql, re.I) else "compared"
+                )
+                explanation_parts.append(
+                    f"The analysis {aggregation_label} { _readable(y_key) } "
+                    f"across { _readable(x_key) } groups."
+                )
+        elif len(rows) == 1:
+            values = [
+                f"{_readable(key)} = {value:,.2f}"
+                for key, raw in rows[0].items()
+                if (value := numeric_value(raw)) is not None
+            ]
+            if values:
+                explanation_parts.append(
+                    "The result is a dataset-wide metric: " + ", ".join(values[:5]) + "."
+                )
+                if re.search(r"\bSUM\s*\(", sql, re.I):
+                    explanation_parts.append("It is calculated by adding the qualifying values across the dataset.")
+                elif re.search(r"\bAVG\s*\(", sql, re.I):
+                    explanation_parts.append("It is calculated as the arithmetic average of the qualifying values.")
+        else:
+            explanation_parts.append(
+                f"The previous query returned {len(rows):,} rows. "
+                f"The first result contains: {', '.join(keys[:6])}."
             )
-        )
-    )
 
+    if prior_answer:
+        explanation_parts.insert(0, f"The previous analysis found: {prior_answer}")
+    if not explanation_parts:
+        explanation_parts.append(
+            "I can see the previous question, but it did not include structured result rows to explain. "
+            "Please rerun that analysis so I can explain its figures."
+        )
+
+    answer = " ".join(explanation_parts)
     return _base_result(
         question,
         "contextual_followup",
         answer,
-        previous_result.get(
-            "sql",
-            "",
-        ),
-        previous_result.get(
-            "columns",
-            [],
-        ),
-        previous_result.get(
-            "rows",
-            [],
-        ),
-        previous_result.get(
-            "visualization",
-        ),
+        sql,
+        previous_result.get("columns") or (list(rows[0].keys()) if rows else []),
+        rows,
+        visualization if isinstance(visualization, dict) else None,
+        explained_result_type=previous_result.get("type"),
     )
 
 
